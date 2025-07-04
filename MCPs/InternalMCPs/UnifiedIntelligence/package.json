@@ -1,0 +1,42 @@
+{
+  "name": "unified-intelligence",
+  "version": "1.0.0",
+  "description": "The core reasoning and thinking layer for the Federation.",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "unified-intelligence": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node test.js",
+    "test:watch": "nodemon test.js",
+    "docker:build": "docker build -t unified-intelligence .",
+    "docker:run": "docker run --rm unified-intelligence"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "unified-intelligence",
+    "federation",
+    "llm",
+    "ai",
+    "reasoning"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/legacymind/unified-intelligence-mcp.git"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.14.0",
+    "ioredis": "^5.3.2",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  },
+  "author": "LegacyMind Federation",
+  "license": "ISC"
+}

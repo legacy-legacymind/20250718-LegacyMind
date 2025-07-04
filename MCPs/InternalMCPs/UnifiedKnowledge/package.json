@@ -1,0 +1,23 @@
+{
+  "name": "unified-workflow",
+  "version": "2.0.0",
+  "description": "Manages tickets, projects, and other workflows via Redis.",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "unified-workflow": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node test-error-handling.js",
+    "test:error-handling": "node test-error-handling.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.14.0",
+    "redis": "^5.5.6",
+    "openai": "^4.52.7",
+    "@qdrant/js-client-rest": "^1.9.0",
+    "pg": "^8.12.0",
+    "uuid": "^10.0.0"
+  }
+}
