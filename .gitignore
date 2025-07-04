@@ -1,0 +1,14 @@
+# Ignore node_modules
+node_modules/
+
+# Ignore database data
+Memory/
+postgres/
+qdrant/
+redis/
+
+# Ignore environment files
+.env
+
+# Ignore OS-specific files
+.DS_Store
