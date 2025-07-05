@@ -120,7 +120,7 @@ export class RedisManager {
       
       // Prepare ticket data
       const ticketHash = {
-        ticket_id: ticketData.ticket_id,
+        ticket_id: ticketData.id || ticketData.ticket_id,
         title: ticketData.title || '',
         description: ticketData.description || '',
         status: ticketData.status || 'OPEN',
@@ -132,13 +132,18 @@ export class RedisManager {
         assignee: ticketData.assignee || '',
         created_at: ticketData.created_at || now,
         updated_at: now,
+        closed_at: ticketData.closed_at || '',
         tags: JSON.stringify(ticketData.tags || []),
         members: JSON.stringify(ticketData.members || []),
         linked_tickets: JSON.stringify(ticketData.linked_tickets || []),
         acceptance_criteria: JSON.stringify(ticketData.acceptance_criteria || []),
         estimated_hours: String(ticketData.estimated_hours || 0),
         resolution: ticketData.resolution || '',
-        qdrant_id: ticketData.qdrant_id || ''
+        qdrant_id: ticketData.qdrant_id || '',
+        comments: JSON.stringify(ticketData.comments || []),
+        history: JSON.stringify(ticketData.history || []),
+        links: JSON.stringify(ticketData.links || []),
+        metadata: JSON.stringify(ticketData.metadata || {})
       };
       
       // Get old ticket data to clean up old indexes
@@ -250,6 +255,7 @@ export class RedisManager {
       
       // Parse JSON fields
       return {
+        id: data.ticket_id,  // Map ticket_id to id for consistency
         ticket_id: data.ticket_id,
         title: data.title,
         description: data.description,
@@ -262,13 +268,18 @@ export class RedisManager {
         assignee: data.assignee,
         created_at: data.created_at,
         updated_at: data.updated_at,
+        closed_at: data.closed_at || null,
         tags: JSON.parse(data.tags || '[]'),
         members: JSON.parse(data.members || '[]'),
         linked_tickets: JSON.parse(data.linked_tickets || '[]'),
         acceptance_criteria: JSON.parse(data.acceptance_criteria || '[]'),
         estimated_hours: parseInt(data.estimated_hours || '0'),
         resolution: data.resolution,
-        qdrant_id: data.qdrant_id
+        qdrant_id: data.qdrant_id,
+        comments: JSON.parse(data.comments || '[]'),
+        history: JSON.parse(data.history || '[]'),
+        links: JSON.parse(data.links || '[]'),
+        metadata: JSON.parse(data.metadata || '{}')
       };
     } catch (error) {
       console.error(`[Redis] Failed to get ticket ${ticketId}:`, error.message);
@@ -741,6 +752,69 @@ export class RedisManager {
         connected: false,
         timestamp: new Date().toISOString() 
       };
+    }
+  }
+
+  // Get all tickets (convenience method)
+  async getAllTickets() {
+    await this.ensureConnected();
+    
+    try {
+      // Get all ticket IDs from the created_at index
+      const ticketIds = await this.client.zRange('index:created_at', 0, -1, { REV: true });
+      
+      if (ticketIds.length === 0) {
+        return [];
+      }
+      
+      // Batch fetch using pipeline
+      const pipeline = this.client.pipeline();
+      for (const ticketId of ticketIds) {
+        pipeline.hGetAll(`ticket:${ticketId}`);
+      }
+      
+      const results = await pipeline.exec();
+      const tickets = [];
+      
+      for (let i = 0; i < results.length; i++) {
+        const [error, data] = results[i];
+        if (!error && data && Object.keys(data).length > 0) {
+          tickets.push({
+            id: data.ticket_id,  // Map ticket_id to id for consistency
+            ticket_id: data.ticket_id,
+            title: data.title,
+            description: data.description,
+            status: data.status,
+            priority: data.priority,
+            type: data.type,
+            category: data.category,
+            system: data.system,
+            reporter: data.reporter,
+            assignee: data.assignee,
+            created_at: data.created_at,
+            updated_at: data.updated_at,
+            tags: JSON.parse(data.tags || '[]'),
+            members: JSON.parse(data.members || '[]'),
+            linked_tickets: JSON.parse(data.linked_tickets || '[]'),
+            acceptance_criteria: JSON.parse(data.acceptance_criteria || '[]'),
+            estimated_hours: parseInt(data.estimated_hours || '0'),
+            resolution: data.resolution,
+            qdrant_id: data.qdrant_id,
+            // Include these fields that ticket-tools expects
+            comments: JSON.parse(data.comments || '[]'),
+            history: JSON.parse(data.history || '[]'),
+            links: JSON.parse(data.links || '[]'),
+            closed_at: data.closed_at || null,
+            metadata: JSON.parse(data.metadata || '{}')
+          });
+        }
+      }
+      
+      return tickets;
+      
+    } catch (error) {
+      console.error('[Redis] Failed to get all tickets:', error.message);
+      throw new Error(`Failed to get all tickets: ${error.message}`);
     }
   }
 
