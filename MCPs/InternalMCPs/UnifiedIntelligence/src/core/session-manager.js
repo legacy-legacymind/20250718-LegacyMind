@@ -22,8 +22,8 @@ export class SessionManager {
       throw new Error('Invalid instanceId provided');
     }
 
-    const sessionKey = `session:${instanceId}`;
-    const activitySetKey = 'z_session_activity';
+    const sessionKey = `${instanceId}:session`;
+    const activitySetKey = `${instanceId}:session_activity`;
     const currentTime = new Date().toISOString();
     const unixTime = Math.floor(Date.now() / 1000);
     
@@ -105,6 +105,7 @@ export class SessionManager {
 
   /**
    * Get the currently active session using Redis Sorted Set (O(1) operation)
+   * Note: This method needs to scan all instance activity sets to find the most recent session
    * @returns {Promise<object|null>} - The active session or null
    * @throws {Error} - Redis connection errors are thrown, not swallowed
    */
@@ -114,32 +115,47 @@ export class SessionManager {
     }
     
     try {
-      const activitySetKey = 'z_session_activity';
+      // Get all instance activity set keys
+      const activitySetPattern = '*:session_activity';
+      const activitySetKeys = await this.redis.keys(activitySetPattern);
       
-      // Get most recent session (highest score) - O(1) operation
-      const recentSessions = await this.redis.zrevrange(activitySetKey, 0, 0);
-      
-      if (!recentSessions || recentSessions.length === 0) {
+      if (!activitySetKeys || activitySetKeys.length === 0) {
         return null; // No sessions found
       }
       
-      const sessionKey = recentSessions[0];
-      const sessionData = await this.redis.hgetall(sessionKey);
+      let mostRecentSession = null;
+      let mostRecentScore = -1;
       
-      if (!sessionData || !sessionData.id) {
-        // Clean up orphaned entry in sorted set
-        await this.redis.zrem(activitySetKey, sessionKey);
-        return null;
+      // Check each instance's activity set
+      for (const activitySetKey of activitySetKeys) {
+        const recentSessions = await this.redis.zrevrange(activitySetKey, 0, 0, 'WITHSCORES');
+        
+        if (recentSessions && recentSessions.length >= 2) {
+          const sessionKey = recentSessions[0];
+          const score = parseFloat(recentSessions[1]);
+          
+          if (score > mostRecentScore) {
+            const sessionData = await this.redis.hgetall(sessionKey);
+            
+            if (sessionData && sessionData.id) {
+              mostRecentScore = score;
+              mostRecentSession = {
+                id: sessionData.id,
+                instanceId: sessionData.instanceId,
+                status: sessionData.status,
+                createdAt: sessionData.createdAt,
+                lastActive: sessionData.lastActive,
+                thoughtCount: parseInt(sessionData.thoughtCount) || 0
+              };
+            } else {
+              // Clean up orphaned entry in sorted set
+              await this.redis.zrem(activitySetKey, sessionKey);
+            }
+          }
+        }
       }
       
-      return {
-        id: sessionData.id,
-        instanceId: sessionData.instanceId,
-        status: sessionData.status,
-        createdAt: sessionData.createdAt,
-        lastActive: sessionData.lastActive,
-        thoughtCount: parseInt(sessionData.thoughtCount) || 0
-      };
+      return mostRecentSession;
     } catch (error) {
       logger.error('Error getting active session', { error: error.message });
       throw new Error(`Failed to get active session: ${error.message}`);
@@ -161,8 +177,8 @@ export class SessionManager {
       throw new Error('Invalid instanceId provided');
     }
     
-    const sessionKey = `session:${instanceId}`;
-    const activitySetKey = 'z_session_activity';
+    const sessionKey = `${instanceId}:session`;
+    const activitySetKey = `${instanceId}:session_activity`;
     const currentTime = new Date().toISOString();
     const unixTime = Math.floor(Date.now() / 1000);
     
@@ -210,8 +226,8 @@ export class SessionManager {
       throw new Error('Invalid instanceId provided');
     }
     
-    const sessionKey = `session:${instanceId}`;
-    const activitySetKey = 'z_session_activity';
+    const sessionKey = `${instanceId}:session`;
+    const activitySetKey = `${instanceId}:session_activity`;
     
     try {
       // Get session data before ending

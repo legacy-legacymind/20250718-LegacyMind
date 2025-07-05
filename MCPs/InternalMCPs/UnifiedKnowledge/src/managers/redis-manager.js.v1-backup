@@ -1,0 +1,470 @@
+import { createClient } from 'redis';
+
+export class RedisManager {
+  constructor() {
+    this.client = null;
+    this.isConnected = false;
+  }
+
+  async connect() {
+    try {
+      const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+      
+      this.client = createClient({
+        url: redisUrl,
+        socket: {
+          reconnectStrategy: (retries) => {
+            if (retries > 5) {
+              console.error('[Redis] Max reconnection attempts reached');
+              return new Error('Max reconnection attempts reached');
+            }
+            return Math.min(retries * 100, 3000);
+          }
+        }
+      });
+
+      this.client.on('error', (err) => {
+        console.error('[Redis] Client error:', err);
+      });
+
+      this.client.on('connect', () => {
+        console.error('[Redis] Connected to Redis');
+        this.isConnected = true;
+      });
+
+      this.client.on('ready', () => {
+        console.error('[Redis] Redis client ready');
+      });
+
+      await this.client.connect();
+      
+      // Test connection
+      await this.client.ping();
+      
+      return true;
+    } catch (error) {
+      console.error('[Redis] Connection failed:', error);
+      throw error;
+    }
+  }
+
+  async disconnect() {
+    if (this.client) {
+      await this.client.quit();
+      this.isConnected = false;
+    }
+  }
+
+  // Ticket operations using dual structure (Hash + Indexes)
+  async storeTicket(ticketId, ticketData) {
+    try {
+      const key = `ticket:${ticketId}`;
+      const now = new Date().toISOString();
+      const timestamp = Date.now();
+      
+      // Priority scores for sorting
+      const priorityScores = { 'CRITICAL': 4, 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1 };
+      
+      // Store ticket data in hash with all fields
+      await this.client.hSet(key, {
+        ticket_id: ticketData.ticket_id,
+        title: ticketData.title,
+        description: ticketData.description,
+        status: ticketData.status,
+        priority: ticketData.priority,
+        type: ticketData.type,
+        category: ticketData.category || '',
+        system: ticketData.system || '',
+        reporter: ticketData.reporter,
+        assignee: ticketData.assignee || '',
+        created_at: ticketData.created_at,
+        updated_at: now,
+        tags: JSON.stringify(ticketData.tags || []),
+        members: JSON.stringify(ticketData.members || []),
+        linked_tickets: JSON.stringify(ticketData.linked_tickets || []),
+        acceptance_criteria: JSON.stringify(ticketData.acceptance_criteria || []),
+        estimated_hours: String(ticketData.estimated_hours || 0),
+        resolution: ticketData.resolution || '',
+        qdrant_id: ticketData.qdrant_id || ''
+      });
+      
+      // Remove from old indexes if updating
+      await this.removeFromIndexes(ticketId);
+      
+      // Add to status index (validate first)
+      if (ticketData.status) {
+        await this.client.sAdd(`index:status:${ticketData.status.toLowerCase()}`, ticketId);
+      }
+      
+      // Add to assignee index
+      if (ticketData.assignee) {
+        await this.client.sAdd(`index:assignee:${ticketData.assignee.toLowerCase()}`, ticketId);
+      }
+      
+      // Add to reporter index
+      if (ticketData.reporter) {
+        await this.client.sAdd(`index:reporter:${ticketData.reporter.toLowerCase()}`, ticketId);
+      }
+      
+      // Add to type index
+      if (ticketData.type) {
+        await this.client.sAdd(`index:type:${ticketData.type.toLowerCase()}`, ticketId);
+      }
+      
+      // Add to priority index
+      if (ticketData.priority) {
+        await this.client.sAdd(`index:priority:${ticketData.priority.toLowerCase()}`, ticketId);
+      }
+      
+      // Add to tag indexes
+      if (ticketData.tags && ticketData.tags.length > 0) {
+        for (const tag of ticketData.tags) {
+          await this.client.sAdd(`index:tag:${tag.toLowerCase()}`, ticketId);
+        }
+      }
+      
+      // Add to sorted sets for ordering
+      const createdTimestamp = new Date(ticketData.created_at).getTime();
+      await this.client.zAdd('index:created_at', { score: createdTimestamp, value: ticketId });
+      await this.client.zAdd('index:updated_at', { score: timestamp, value: ticketId });
+      await this.client.zAdd('index:priority', { score: priorityScores[ticketData.priority], value: ticketId });
+      
+      // Set TTL for closed tickets (24 hours)
+      if (['CLOSED', 'CANCELLED'].includes(ticketData.status)) {
+        await this.client.expire(key, 86400);
+      } else {
+        await this.client.persist(key);
+      }
+      
+      return ticketData;
+    } catch (error) {
+      console.error(`[Redis] Failed to store ticket ${ticketId}:`, error);
+      throw new Error(`Failed to store ticket: ${error.message}`);
+    }
+  }
+
+  async getTicket(ticketId) {
+    try {
+      const key = `ticket:${ticketId}`;
+      const data = await this.client.hGetAll(key);
+      
+      if (!data || Object.keys(data).length === 0) {
+        return null;
+      }
+      
+      // Parse JSON fields
+      return {
+        ticket_id: data.ticket_id,
+        title: data.title,
+        description: data.description,
+        status: data.status,
+        priority: data.priority,
+        type: data.type,
+        category: data.category,
+        system: data.system,
+        reporter: data.reporter,
+        assignee: data.assignee,
+        created_at: data.created_at,
+        updated_at: data.updated_at,
+        tags: JSON.parse(data.tags || '[]'),
+        members: JSON.parse(data.members || '[]'),
+        linked_tickets: JSON.parse(data.linked_tickets || '[]'),
+        acceptance_criteria: JSON.parse(data.acceptance_criteria || '[]'),
+        estimated_hours: parseInt(data.estimated_hours || '0'),
+        resolution: data.resolution,
+        qdrant_id: data.qdrant_id
+      };
+    } catch (error) {
+      console.error(`[Redis] Failed to get ticket ${ticketId}:`, error);
+      throw new Error(`Failed to get ticket: ${error.message}`);
+    }
+  }
+
+  async deleteTicket(ticketId) {
+    try {
+      const key = `ticket:${ticketId}`;
+      
+      // Remove from all indexes
+      await this.removeFromIndexes(ticketId);
+      
+      // Delete the ticket data
+      await this.client.del(key);
+    } catch (error) {
+      console.error(`[Redis] Failed to delete ticket ${ticketId}:`, error);
+      throw new Error(`Failed to delete ticket: ${error.message}`);
+    }
+  }
+
+  async getAllActiveTickets() {
+    try {
+      // Get all ticket IDs that are not closed or cancelled
+      const closedIds = await this.client.sMembers('index:status:closed');
+      const cancelledIds = await this.client.sMembers('index:status:cancelled');
+      const excludeIds = new Set([...closedIds, ...cancelledIds]);
+      
+      // Get all ticket IDs from the creation index (most recent first)
+      const allIds = await this.client.zRange('index:created_at', 0, -1, { REV: true });
+      const activeIds = allIds.filter(id => !excludeIds.has(id));
+      
+      if (activeIds.length === 0) {
+        return [];
+      }
+      
+      // Get all tickets in batch
+      const tickets = [];
+      for (const ticketId of activeIds) {
+        const ticket = await this.getTicket(ticketId);
+        if (ticket) {
+          tickets.push(ticket);
+        }
+      }
+      
+      return tickets;
+    } catch (error) {
+      console.error('[Redis] Failed to get active tickets:', error);
+      throw new Error(`Failed to get active tickets: ${error.message}`);
+    }
+  }
+
+  async getAllClosedTickets() {
+    try {
+      // Get all closed and cancelled ticket IDs
+      const closedIds = await this.client.sMembers('index:status:closed');
+      const cancelledIds = await this.client.sMembers('index:status:cancelled');
+      const allClosedIds = [...closedIds, ...cancelledIds];
+      
+      if (allClosedIds.length === 0) {
+        return [];
+      }
+      
+      // Get all tickets in batch
+      const tickets = [];
+      for (const ticketId of allClosedIds) {
+        const ticket = await this.getTicket(ticketId);
+        if (ticket) {
+          tickets.push(ticket);
+        }
+      }
+      
+      // Sort by updated_at descending
+      tickets.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+      
+      return tickets;
+    } catch (error) {
+      console.error('[Redis] Failed to get closed tickets:', error);
+      throw new Error(`Failed to get closed tickets: ${error.message}`);
+    }
+  }
+
+  // Helper method to remove ticket from all indexes
+  async removeFromIndexes(ticketId) {
+    try {
+      // Get current ticket data to know which indexes to clean
+      const ticket = await this.getTicket(ticketId);
+      if (!ticket) return;
+      
+      // Remove from status indexes
+      await this.client.sRem(`index:status:${ticket.status.toLowerCase()}`, ticketId);
+      
+      // Remove from assignee index
+      if (ticket.assignee) {
+        await this.client.sRem(`index:assignee:${ticket.assignee.toLowerCase()}`, ticketId);
+      }
+      
+      // Remove from reporter index
+      await this.client.sRem(`index:reporter:${ticket.reporter.toLowerCase()}`, ticketId);
+      
+      // Remove from type index
+      await this.client.sRem(`index:type:${ticket.type.toLowerCase()}`, ticketId);
+      
+      // Remove from priority index
+      await this.client.sRem(`index:priority:${ticket.priority.toLowerCase()}`, ticketId);
+      
+      // Remove from tag indexes
+      if (ticket.tags && ticket.tags.length > 0) {
+        for (const tag of ticket.tags) {
+          await this.client.sRem(`index:tag:${tag.toLowerCase()}`, ticketId);
+        }
+      }
+      
+      // Remove from sorted sets
+      await this.client.zRem('index:created_at', ticketId);
+      await this.client.zRem('index:updated_at', ticketId);
+      await this.client.zRem('index:priority', ticketId);
+      
+    } catch (error) {
+      console.error(`[Redis] Failed to remove ticket ${ticketId} from indexes:`, error);
+      // Don't throw - this is cleanup
+    }
+  }
+  
+  // Advanced search methods
+  async searchTickets(filters = {}) {
+    try {
+      let ticketIds = [];
+      
+      // Build intersection of sets based on filters
+      const setKeys = [];
+      
+      if (filters.status) {
+        setKeys.push(`index:status:${filters.status.toLowerCase()}`);
+      }
+      
+      if (filters.assignee) {
+        setKeys.push(`index:assignee:${filters.assignee.toLowerCase()}`);
+      }
+      
+      if (filters.reporter) {
+        setKeys.push(`index:reporter:${filters.reporter.toLowerCase()}`);
+      }
+      
+      if (filters.type) {
+        setKeys.push(`index:type:${filters.type.toLowerCase()}`);
+      }
+      
+      if (filters.priority) {
+        setKeys.push(`index:priority:${filters.priority.toLowerCase()}`);
+      }
+      
+      if (filters.tags && filters.tags.length > 0) {
+        for (const tag of filters.tags) {
+          setKeys.push(`index:tag:${tag.toLowerCase()}`);
+        }
+      }
+      
+      if (setKeys.length === 0) {
+        // No filters, return all tickets sorted by creation date
+        ticketIds = await this.client.zRange('index:created_at', 0, -1, { REV: true });
+      } else if (setKeys.length === 1) {
+        // Single filter
+        ticketIds = await this.client.sMembers(setKeys[0]);
+      } else {
+        // Multiple filters - intersect the sets
+        const tempKey = `temp:search:${Date.now()}`;
+        await this.client.sInterStore(tempKey, setKeys);
+        ticketIds = await this.client.sMembers(tempKey);
+        await this.client.del(tempKey);
+      }
+      
+      // Get full ticket data
+      const tickets = [];
+      for (const ticketId of ticketIds) {
+        const ticket = await this.getTicket(ticketId);
+        if (ticket) {
+          tickets.push(ticket);
+        }
+      }
+      
+      // Sort by priority then by creation date
+      tickets.sort((a, b) => {
+        const priorityOrder = { 'CRITICAL': 4, 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1 };
+        const aPriority = priorityOrder[a.priority] || 0;
+        const bPriority = priorityOrder[b.priority] || 0;
+        
+        if (aPriority !== bPriority) {
+          return bPriority - aPriority; // Higher priority first
+        }
+        
+        return new Date(b.created_at) - new Date(a.created_at); // Newer first
+      });
+      
+      return tickets;
+    } catch (error) {
+      console.error('[Redis] Failed to search tickets:', error);
+      throw new Error(`Failed to search tickets: ${error.message}`);
+    }
+  }
+  
+  // Get tickets by specific criteria (optimized single-filter searches)
+  async getTicketsByStatus(status) {
+    const ticketIds = await this.client.sMembers(`index:status:${status.toLowerCase()}`);
+    const tickets = [];
+    for (const ticketId of ticketIds) {
+      const ticket = await this.getTicket(ticketId);
+      if (ticket) tickets.push(ticket);
+    }
+    return tickets;
+  }
+  
+  async getTicketsByAssignee(assignee) {
+    const ticketIds = await this.client.sMembers(`index:assignee:${assignee.toLowerCase()}`);
+    const tickets = [];
+    for (const ticketId of ticketIds) {
+      const ticket = await this.getTicket(ticketId);
+      if (ticket) tickets.push(ticket);
+    }
+    return tickets;
+  }
+  
+  async getTicketsByTag(tag) {
+    const ticketIds = await this.client.sMembers(`index:tag:${tag.toLowerCase()}`);
+    const tickets = [];
+    for (const ticketId of ticketIds) {
+      const ticket = await this.getTicket(ticketId);
+      if (ticket) tickets.push(ticket);
+    }
+    return tickets;
+  }
+  
+  async getRecentTickets(limit = 10) {
+    const ticketIds = await this.client.zRange('index:created_at', 0, limit - 1, { REV: true });
+    const tickets = [];
+    for (const ticketId of ticketIds) {
+      const ticket = await this.getTicket(ticketId);
+      if (ticket) tickets.push(ticket);
+    }
+    return tickets;
+  }
+  
+  async getTicketsByPriority(priority) {
+    const ticketIds = await this.client.sMembers(`index:priority:${priority.toLowerCase()}`);
+    const tickets = [];
+    for (const ticketId of ticketIds) {
+      const ticket = await this.getTicket(ticketId);
+      if (ticket) tickets.push(ticket);
+    }
+    return tickets;
+  }
+
+  // System documentation operations (Phase 2)
+  async storeSystemDoc(docId, docData) {
+    const key = `uk:doc:${docId}`;
+    const serialized = JSON.stringify(docData);
+    
+    await this.client.hSet(key, {
+      data: serialized,
+      updated_at: new Date().toISOString()
+    });
+    
+    // Add to category index
+    const score = Date.now();
+    await this.client.zAdd(`uk:docs:${docData.category}`, { score, value: docId });
+    
+    return docData;
+  }
+
+  async getSystemDoc(docId) {
+    const key = `uk:doc:${docId}`;
+    const data = await this.client.hGet(key, 'data');
+    
+    if (!data) {
+      return null;
+    }
+    
+    return JSON.parse(data);
+  }
+
+  // Health check
+  async healthCheck() {
+    try {
+      await this.client.ping();
+      return { status: 'healthy', timestamp: new Date().toISOString() };
+    } catch (error) {
+      return { 
+        status: 'unhealthy', 
+        error: error.message, 
+        timestamp: new Date().toISOString() 
+      };
+    }
+  }
+}

@@ -1,23 +1,39 @@
 {
-  "name": "unified-workflow",
-  "version": "2.0.0",
-  "description": "Manages tickets, projects, and other workflows via Redis.",
+  "name": "unified-knowledge",
+  "version": "1.0.0",
+  "description": "Multi-database knowledge management MCP for tickets and system documentation",
   "type": "module",
   "main": "src/index.js",
   "bin": {
-    "unified-workflow": "src/index.js"
+    "unified-knowledge": "src/index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "scripts": {
     "start": "node src/index.js",
-    "test": "node test-error-handling.js",
-    "test:error-handling": "node test-error-handling.js"
+    "dev": "node --watch src/index.js",
+    "test": "node test.js",
+    "migrate": "node scripts/migrate-redis-tickets.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.14.0",
-    "redis": "^5.5.6",
-    "openai": "^4.52.7",
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "@qdrant/js-client-rest": "^1.9.0",
+    "dotenv": "^17.0.1",
+    "openai": "^4.52.7",
     "pg": "^8.12.0",
+    "redis": "^4.6.15",
     "uuid": "^10.0.0"
-  }
+  },
+  "keywords": [
+    "mcp",
+    "knowledge",
+    "tickets",
+    "documentation",
+    "redis",
+    "postgresql",
+    "qdrant"
+  ],
+  "author": "LegacyMind",
+  "license": "MIT"
 }

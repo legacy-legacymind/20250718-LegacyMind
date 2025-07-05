@@ -1,5 +1,6 @@
 import { SessionManager } from './session-manager.js';
 import { ModeDetector } from './mode-detector.js';
+import { AutoCaptureMonitor } from './auto-capture/monitor.js';
 import ioredis from 'ioredis';
 import { logger } from '../utils/logger.js';
 import { v4 as uuidv4 } from 'uuid';
@@ -10,7 +11,9 @@ export class UnifiedIntelligence {
     this.redis = null;
     this.sessions = null; // Will be initialized after Redis connection
     this.modeDetector = new ModeDetector();
+    this.autoCapture = null; // Will be initialized after Redis connection
     this.isShuttingDown = false;
+    this.currentInstanceId = null; // Track the current instance for this connection
     
     // Initialize Redis connection
     if (config.redisUrl) {
@@ -49,6 +52,9 @@ export class UnifiedIntelligence {
       // Initialize SessionManager with Redis client
       this.sessions = new SessionManager(this.redis);
       
+      // Initialize AutoCaptureMonitor
+      this.autoCapture = new AutoCaptureMonitor(this.redis, this);
+      
       logger.info('Redis connection established successfully');
     } catch (error) {
       logger.error('Failed to initialize Redis connection', {
@@ -56,6 +62,7 @@ export class UnifiedIntelligence {
       });
       this.redis = null;
       this.sessions = null;
+      this.autoCapture = null;
     }
   }
 
@@ -75,26 +82,53 @@ export class UnifiedIntelligence {
             throw new Error('Session manager not initialized. Redis connection required.');
           }
           
-          // Get or create session
-          const session = await this.sessions.getCurrentOrCreate('default');
+          // Use current instance or get active session
+          let instanceId = this.currentInstanceId;
+          let sessionId;
+          
+          if (instanceId) {
+            // Get session for current instance
+            const session = await this.sessions.getCurrentOrCreate(instanceId);
+            sessionId = session.id;
+          } else {
+            // Fallback to active session
+            const session = await this.sessions.getActiveSession();
+            if (!session || !session.instanceId) {
+              throw new Error('No active session found. Please check in first with an instance identity.');
+            }
+            instanceId = session.instanceId;
+            sessionId = session.id;
+          }
           
           // Capture thought and update session activity
-          const result = await this.captureThought({ thought, options, sessionId: session.id });
+          const result = await this.captureThought({ 
+            thought, 
+            options, 
+            sessionId,
+            instanceId 
+          });
           
           // Update session activity after capturing thought
-          await this.sessions.updateActivity('default');
+          await this.sessions.updateActivity(instanceId);
           
           return result;
 
         case 'status':
-          const session2 = await this.sessions.getActiveSession();
-          if (!session2) {
-            return {
-              status: 'no_active_session',
-              message: 'No active session found.'
-            };
+          // Use current instance if available
+          if (this.currentInstanceId) {
+            const session = await this.sessions.getCurrentOrCreate(this.currentInstanceId);
+            return await this.getSessionStatus(session.id);
+          } else {
+            // Fallback to active session
+            const session2 = await this.sessions.getActiveSession();
+            if (!session2) {
+              return {
+                status: 'no_active_session',
+                message: 'No active session found.'
+              };
+            }
+            return await this.getSessionStatus(session2.id);
           }
-          return await this.getSessionStatus(session2.id);
 
         case 'check_in':
           const { identity } = args;
@@ -103,16 +137,82 @@ export class UnifiedIntelligence {
           }
           return await this.initializeFederation(identity);
 
+        case 'remember_identity':
+          const { content: identityContent } = args;
+          if (!identityContent || typeof identityContent !== 'string') {
+            throw new Error('Content is required for remember_identity action');
+          }
+          return await this.rememberIdentity(identityContent);
+
+        case 'remember_context':
+          const { content: contextContent } = args;
+          if (!contextContent || typeof contextContent !== 'string') {
+            throw new Error('Content is required for remember_context action');
+          }
+          return await this.rememberContext(contextContent);
+
+        case 'remember_curiosity':
+          const { content: curiosityContent } = args;
+          if (!curiosityContent || typeof curiosityContent !== 'string') {
+            throw new Error('Content is required for remember_curiosity action');
+          }
+          return await this.rememberCuriosity(curiosityContent);
+
+        case 'monitor':
+          const { operation = 'status', thresholds } = args;
+          if (!this.autoCapture) {
+            throw new Error('Auto-capture monitor not initialized');
+          }
+          
+          switch (operation) {
+            case 'start':
+              const instanceForStart = this.currentInstanceId || args.options?.instance;
+              if (!instanceForStart) {
+                throw new Error('Instance ID required to start monitor');
+              }
+              return await this.autoCapture.start(instanceForStart);
+              
+            case 'stop':
+              const instanceForStop = this.currentInstanceId || args.options?.instance;
+              if (!instanceForStop) {
+                throw new Error('Instance ID required to stop monitor');
+              }
+              return await this.autoCapture.stop(instanceForStop);
+              
+            case 'status':
+              const instanceForStatus = this.currentInstanceId || args.options?.instance;
+              if (!instanceForStatus) {
+                throw new Error('Instance ID required for monitor status');
+              }
+              return await this.autoCapture.status(instanceForStatus);
+              
+            case 'thresholds':
+              if (!thresholds) {
+                throw new Error('Thresholds required for update operation');
+              }
+              return await this.autoCapture.updateThresholds(thresholds);
+              
+            default:
+              throw new Error(`Unknown monitor operation: ${operation}`);
+          }
+
         case 'help':
           return {
             description: 'UnifiedIntelligence: Simple thought capture to Redis',
             actions: {
               capture: 'Capture a thought to Redis',
               status: 'Get session status',
+              monitor: 'Control auto-capture monitoring (start/stop/status/thresholds)',
               check_in: 'Initialize instance',
+              remember_identity: 'Store/update instance identity information',
+              remember_context: 'Store/update current working context',
+              remember_curiosity: 'Store/update what the instance is curious about',
               help: 'Get this help'
             },
-            example: '{ "action": "capture", "thought": "your thought content" }'
+            examples: {
+              capture: '{ "action": "capture", "thought": "your thought content" }',
+              remember: '{ "action": "remember_identity", "content": "I am CCI, the Intelligence Specialist" }'
+            }
           };
 
         default:
@@ -124,7 +224,7 @@ export class UnifiedIntelligence {
     }
   }
 
-  async captureThought({ thought, options, sessionId }) {
+  async captureThought({ thought, options, sessionId, instanceId }) {
     if (!this.redis) {
       throw new Error('Redis connection not available');
     }
@@ -138,9 +238,18 @@ export class UnifiedIntelligence {
       throw new Error('Session ID must be a non-empty string');
     }
     
+    if (!instanceId || typeof instanceId !== 'string' || instanceId.trim() === '') {
+      throw new Error('Instance ID must be a non-empty string');
+    }
+    
     // Validate sessionId format - reject instead of sanitize to prevent data loss
     if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
       throw new Error('Session ID contains invalid characters. Only alphanumeric, underscore, and hyphen allowed.');
+    }
+    
+    // Validate instanceId format
+    if (!/^[a-zA-Z0-9_-]+$/.test(instanceId)) {
+      throw new Error('Instance ID contains invalid characters. Only alphanumeric, underscore, and hyphen allowed.');
     }
     
     // Validate options object
@@ -172,22 +281,23 @@ export class UnifiedIntelligence {
       // Use Redis pipeline for atomic operations (performance improvement)
       const pipeline = this.redis.pipeline();
       
-      // Write to Redis stream
-      const streamKey = `thoughts:${thoughtData.sessionId}`;
+      // Write to Redis stream with instance namespace
+      const streamKey = `${instanceId}:thoughts`;
       pipeline.xadd(streamKey, '*', 
         'id', thoughtData.id,
         'content', thoughtData.content,
         'mode', thoughtData.mode,
         'confidence', thoughtData.confidence,
         'timestamp', thoughtData.timestamp,
-        'tags', JSON.stringify(thoughtData.tags)
+        'tags', JSON.stringify(thoughtData.tags),
+        'sessionId', sessionId
       );
       
       // Add stream trimming to prevent infinite growth (keep last 1000 entries)
       pipeline.xtrim(streamKey, 'MAXLEN', '~', 1000);
 
-      // Store in Redis hash for direct access (using hset instead of deprecated hmset)
-      const thoughtKey = `thought:${thoughtData.id}`;
+      // Store in Redis hash for direct access with instance namespace
+      const thoughtKey = `${instanceId}:thought:${thoughtData.id}`;
       const hashData = {
         ...thoughtData,
         tags: JSON.stringify(thoughtData.tags) // Ensure consistent JSON handling
@@ -241,14 +351,30 @@ export class UnifiedIntelligence {
     }
 
     try {
-      const streamKey = `thoughts:${sessionId}`;
+      // Try to get session for current instance first
+      let instanceId = this.currentInstanceId;
+      
+      if (!instanceId) {
+        // Fallback: Get the active session to find the instanceId
+        const session = await this.sessions.getActiveSession();
+        if (!session || session.id !== sessionId) {
+          return {
+            status: 'not_found',
+            message: 'Session not found or not active'
+          };
+        }
+        instanceId = session.instanceId;
+      }
+      
+      const streamKey = `${instanceId}:thoughts`;
       const thoughtCount = await this.redis.xlen(streamKey);
       
       return {
         status: 'active',
         sessionId,
+        instanceId,
         thoughtCount,
-        message: `Session has ${thoughtCount} thoughts`
+        message: `Session ${instanceId} has ${thoughtCount} thoughts`
       };
     } catch (error) {
       logger.error('Error getting session status', { error: error.message });
@@ -296,18 +422,174 @@ export class UnifiedIntelligence {
       // Initialize session
       const session = await this.sessions.initializeSession(instanceId);
 
-      logger.info(`Federation initialized for ${instanceId}`);
+      // Initialize instance namespace structure
+      const pipeline = this.redis.pipeline();
+      
+      // Create the thoughts stream (empty initially)
+      const streamKey = `${instanceId}:thoughts`;
+      pipeline.xadd(streamKey, '*', 'init', 'namespace_created', 'timestamp', new Date().toISOString());
+      
+      // Create placeholder keys for identity, context, and curiosity
+      pipeline.set(`${instanceId}:identity`, JSON.stringify(identity));
+      pipeline.expire(`${instanceId}:identity`, 30 * 24 * 60 * 60); // 30 days
+      
+      pipeline.set(`${instanceId}:context`, 'Initial check-in context');
+      pipeline.expire(`${instanceId}:context`, 30 * 24 * 60 * 60); // 30 days
+      
+      pipeline.set(`${instanceId}:curiosity`, 'Ready for exploration');
+      pipeline.expire(`${instanceId}:curiosity`, 30 * 24 * 60 * 60); // 30 days
+      
+      // Execute namespace initialization
+      await pipeline.exec();
 
-      return {
+      // Set this as the current instance for this connection
+      this.currentInstanceId = instanceId;
+
+      // Automatically start auto-capture if enabled
+      let autoCaptureResult = null;
+      if (this.config.enableAutoCapture !== false && this.autoCapture) {
+        try {
+          autoCaptureResult = await this.autoCapture.start(instanceId);
+          logger.info(`Auto-capture started for ${instanceId}`);
+        } catch (error) {
+          logger.error(`Failed to start auto-capture for ${instanceId}`, { error: error.message });
+          autoCaptureResult = { 
+            error: error.message, 
+            reason: 'Auto-capture initialization failed' 
+          };
+        }
+      }
+
+      logger.info(`Federation initialized for ${instanceId} with namespace structure`);
+
+      const response = {
         success: true,
         instanceId,
         sessionId: session.id,
-        message: `Instance ${instanceId} checked into federation`
+        message: `Instance ${instanceId} checked into federation with namespace initialized`
       };
+
+      // Add auto-capture status if applicable
+      if (autoCaptureResult) {
+        response.autoCapture = {
+          enabled: autoCaptureResult.success === true,
+          streamKey: autoCaptureResult.streamKey,
+          monitoring: autoCaptureResult.success === true,
+          error: autoCaptureResult.error,
+          reason: autoCaptureResult.reason
+        };
+      }
+
+      return response;
 
     } catch (error) {
       logger.error('Federation initialization failed', { error: error.message });
       throw new Error(`Federation initialization failed: ${error.message}`);
+    }
+  }
+
+  async rememberIdentity(content) {
+    if (!this.redis) {
+      throw new Error('Redis connection required');
+    }
+
+    // Use current instance if available
+    let instanceId = this.currentInstanceId;
+    
+    if (!instanceId) {
+      // Fallback to active session
+      const session = await this.sessions.getActiveSession();
+      if (!session || !session.instanceId) {
+        throw new Error('No active session found. Please check in first.');
+      }
+      instanceId = session.instanceId;
+    }
+    const identityKey = `${instanceId}:identity`;
+
+    try {
+      await this.redis.set(identityKey, content);
+      await this.redis.expire(identityKey, 30 * 24 * 60 * 60); // 30 days
+
+      logger.info(`Identity remembered for ${instanceId}`);
+      return {
+        success: true,
+        instanceId,
+        type: 'identity',
+        message: `Identity information stored for ${instanceId}`
+      };
+    } catch (error) {
+      logger.error('Failed to remember identity', { error: error.message });
+      throw new Error(`Failed to remember identity: ${error.message}`);
+    }
+  }
+
+  async rememberContext(content) {
+    if (!this.redis) {
+      throw new Error('Redis connection required');
+    }
+
+    // Use current instance if available
+    let instanceId = this.currentInstanceId;
+    
+    if (!instanceId) {
+      // Fallback to active session
+      const session = await this.sessions.getActiveSession();
+      if (!session || !session.instanceId) {
+        throw new Error('No active session found. Please check in first.');
+      }
+      instanceId = session.instanceId;
+    }
+    const contextKey = `${instanceId}:context`;
+
+    try {
+      await this.redis.set(contextKey, content);
+      await this.redis.expire(contextKey, 30 * 24 * 60 * 60); // 30 days
+
+      logger.info(`Context remembered for ${instanceId}`);
+      return {
+        success: true,
+        instanceId,
+        type: 'context',
+        message: `Context information stored for ${instanceId}`
+      };
+    } catch (error) {
+      logger.error('Failed to remember context', { error: error.message });
+      throw new Error(`Failed to remember context: ${error.message}`);
+    }
+  }
+
+  async rememberCuriosity(content) {
+    if (!this.redis) {
+      throw new Error('Redis connection required');
+    }
+
+    // Use current instance if available
+    let instanceId = this.currentInstanceId;
+    
+    if (!instanceId) {
+      // Fallback to active session
+      const session = await this.sessions.getActiveSession();
+      if (!session || !session.instanceId) {
+        throw new Error('No active session found. Please check in first.');
+      }
+      instanceId = session.instanceId;
+    }
+    const curiosityKey = `${instanceId}:curiosity`;
+
+    try {
+      await this.redis.set(curiosityKey, content);
+      await this.redis.expire(curiosityKey, 30 * 24 * 60 * 60); // 30 days
+
+      logger.info(`Curiosity remembered for ${instanceId}`);
+      return {
+        success: true,
+        instanceId,
+        type: 'curiosity',
+        message: `Curiosity information stored for ${instanceId}`
+      };
+    } catch (error) {
+      logger.error('Failed to remember curiosity', { error: error.message });
+      throw new Error(`Failed to remember curiosity: ${error.message}`);
     }
   }
   
@@ -362,6 +644,12 @@ export class UnifiedIntelligence {
       logger.info('Shutting down UnifiedIntelligence...');
       
       try {
+        // Stop auto-capture monitors
+        if (this.autoCapture) {
+          await this.autoCapture.shutdown();
+          logger.info('Auto-capture monitors stopped');
+        }
+        
         if (this.redis) {
           // Properly await Redis disconnect with timeout
           const disconnectPromise = this.redis.quit();

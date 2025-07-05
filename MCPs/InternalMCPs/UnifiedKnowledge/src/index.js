@@ -1,241 +1,294 @@
-// src/index.js
-console.error('!!! UNIFIED WORKFLOW MCP STARTING !!!');
+#!/usr/bin/env node
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { RedisManager } from './managers/redis-manager.js';
-import { DatabaseManager } from './managers/database-manager.js';
+import { PostgreSQLManager } from './managers/postgresql-manager.js';
 import { QdrantManager } from './managers/qdrant-manager.js';
-import { TicketManager } from './managers/ticket-manager.js';
-import { ProjectManager } from './managers/project-manager.js';
-import { DocManager } from './managers/doc-manager.js';
-import { WorkLogManager } from './managers/work-log-manager.js';
-import { StatsManager } from './managers/stats-manager.js';
-import { BatchManager } from './managers/batch-manager.js';
-import { logger } from './utils/logger.js';
-import { ErrorHandler } from './utils/error-handler.js';
+import { EmbeddingService } from './services/embedding-service.js';
+import { ticketTools } from './tools/ticket-tools.js';
+import { systemDocTools } from './tools/system-doc-tools.js';
 
-class UnifiedWorkflowServer {
+class UnifiedKnowledgeServer {
   constructor() {
     this.server = new Server(
-      { name: 'unified-workflow', version: '2.1.0' },
-      { capabilities: { tools: {} } }
+      {
+        name: "unified-knowledge",
+        version: "1.0.0",
+      },
+      {
+        capabilities: {
+          tools: {},
+        },
+      }
     );
-    this.redisManager = new RedisManager();
-    this.dbManager = new DatabaseManager();
-    this.qdrantManager = new QdrantManager();
-    this.workLogManager = new WorkLogManager(this.redisManager, this.dbManager);
-    this.statsManager = new StatsManager(this.redisManager, this.dbManager);
-    this.batchManager = new BatchManager(this.redisManager, this.dbManager);
-    this.ticketManager = new TicketManager(
-      this.redisManager, 
-      this.dbManager, 
-      this.qdrantManager, 
-      this.workLogManager,
-      this.statsManager,
-      this.batchManager
-    );
-    this.projectManager = new ProjectManager(this.redisManager, this.dbManager, this.qdrantManager);
-    this.docManager = new DocManager(this.redisManager, this.dbManager, this.qdrantManager);
+
+    this.redis = null;
+    this.postgres = null;
+    this.qdrant = null;
+    this.embedding = null;
+    
+    this.setupHandlers();
   }
 
   async initialize() {
     try {
-      await this.redisManager.connect();
-      await this.dbManager.connect();
-      await this.qdrantManager.connect();
-      this.setupHandlers();
-      logger.info('UnifiedWorkflow server initialized successfully');
+      // Initialize Redis
+      console.error('[UK] Initializing Redis connection...');
+      this.redis = new RedisManager();
+      await this.redis.connect();
+      
+      // Initialize PostgreSQL
+      console.error('[UK] Initializing PostgreSQL connection...');
+      const dbUrl = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/postgres';
+      this.postgres = new PostgreSQLManager({ connectionString: dbUrl });
+      
+      // Initialize Qdrant
+      console.error('[UK] Initializing Qdrant connection...');
+      this.qdrant = new QdrantManager();
+      await this.qdrant.connect();
+      
+      // Initialize Embedding Service
+      console.error('[UK] Initializing embedding service...');
+      this.embedding = new EmbeddingService();
+      
+      console.error('[UK] All services initialized successfully');
+      
+      // Set up connection monitoring
+      this.startHealthMonitoring();
     } catch (error) {
-      logger.error('Failed to initialize UnifiedWorkflow server', {
-        error: error.message,
-        stack: error.stack
-      });
+      console.error('[UK] Failed to initialize services:', error);
+      // Clean up any successful connections
+      await this.cleanup();
       throw error;
     }
   }
 
+  async cleanup() {
+    console.error('[UK] Cleaning up connections...');
+    
+    try {
+      if (this.redis && this.redis.isConnected) {
+        await this.redis.disconnect();
+      }
+    } catch (error) {
+      console.error('[UK] Error disconnecting Redis:', error);
+    }
+    
+    try {
+      if (this.postgres && this.postgres.isConnected) {
+        await this.postgres.disconnect();
+      }
+    } catch (error) {
+      console.error('[UK] Error disconnecting PostgreSQL:', error);
+    }
+    
+    // Qdrant doesn't have explicit disconnect
+    this.qdrant = null;
+    this.embedding = null;
+  }
+  
+  startHealthMonitoring() {
+    // Monitor connection health every 30 seconds
+    this.healthCheckInterval = setInterval(async () => {
+      try {
+        const health = await this.checkHealth();
+        if (!health.healthy) {
+          console.error('[UK] Health check failed:', health);
+          // Attempt reconnection
+          await this.reconnectServices();
+        }
+      } catch (error) {
+        console.error('[UK] Health check error:', error);
+      }
+    }, 30000);
+  }
+  
+  async checkHealth() {
+    const results = {
+      redis: null,
+      postgres: null,
+      qdrant: null,
+      healthy: true
+    };
+    
+    try {
+      results.redis = await this.redis.healthCheck();
+      if (results.redis.status !== 'healthy') results.healthy = false;
+    } catch (error) {
+      results.redis = { status: 'error', error: error.message };
+      results.healthy = false;
+    }
+    
+    try {
+      results.postgres = await this.postgres.healthCheck();
+      if (results.postgres.status !== 'healthy') results.healthy = false;
+    } catch (error) {
+      results.postgres = { status: 'error', error: error.message };
+      results.healthy = false;
+    }
+    
+    try {
+      results.qdrant = await this.qdrant.healthCheck();
+      if (results.qdrant.status !== 'healthy') results.healthy = false;
+    } catch (error) {
+      results.qdrant = { status: 'error', error: error.message };
+      results.healthy = false;
+    }
+    
+    return results;
+  }
+  
+  async reconnectServices() {
+    console.error('[UK] Attempting to reconnect failed services...');
+    
+    // Try to reconnect Redis if needed
+    if (!this.redis.isConnected) {
+      try {
+        await this.redis.connect();
+        console.error('[UK] Redis reconnected successfully');
+      } catch (error) {
+        console.error('[UK] Failed to reconnect Redis:', error);
+      }
+    }
+    
+    // Try to reconnect PostgreSQL if needed
+    if (!this.postgres.isConnected) {
+      try {
+        await this.postgres.connect();
+        console.error('[UK] PostgreSQL reconnected successfully');
+      } catch (error) {
+        console.error('[UK] Failed to reconnect PostgreSQL:', error);
+      }
+    }
+    
+    // Try to reconnect Qdrant if needed
+    if (!this.qdrant.isConnected) {
+      try {
+        await this.qdrant.connect();
+        console.error('[UK] Qdrant reconnected successfully');
+      } catch (error) {
+        console.error('[UK] Failed to reconnect Qdrant:', error);
+      }
+    }
+  }
+  
   setupHandlers() {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [
-        {
-          name: 'uw_tickets',
-          description: 'Manages tickets using a Redis-based workflow with enhanced Phase 2 features.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              action: { 
-                type: 'string', 
-                enum: ['create', 'update', 'query', 'delete', 'log_work', 'get_work_logs', 'get_stats', 'batch_update'] 
-              },
-              data: { type: 'object' },
-            },
-            required: ['action', 'data'],
-          },
-        },
-        {
-          name: 'uw_projects',
-          description: 'Manages projects with team collaboration features.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              action: { 
-                type: 'string', 
-                enum: ['create', 'update', 'query', 'delete', 'add_member', 'remove_member', 'link_ticket', 'unlink_ticket'] 
-              },
-              data: { type: 'object' },
-            },
-            required: ['action', 'data'],
-          },
-        },
-        {
-          name: 'uw_system_docs',
-          description: 'Manages system documentation with version control and temporal validity.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              action: { 
-                type: 'string', 
-                enum: ['create', 'update', 'query', 'delete', 'add_reference', 'remove_reference'] 
-              },
-              data: { type: 'object' },
-            },
-            required: ['action', 'data'],
-          },
-        },
-      ],
-    }));
+    // Tool listing
+    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      return {
+        tools: [
+          ...ticketTools.getToolDefinitions(),
+          ...systemDocTools.getToolDefinitions()
+        ]
+      };
+    });
 
+    // Tool execution
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
       
       try {
-        let result;
-        
-        switch (name) {
-          case 'uw_tickets':
-            switch (args.action) {
-              case 'create':
-                result = await this.ticketManager.create(args.data);
-                break;
-              case 'update':
-                result = await this.ticketManager.update(args.data);
-                break;
-              case 'query':
-                result = await this.ticketManager.query(args.data);
-                break;
-              case 'delete':
-                result = await this.ticketManager.delete(args.data);
-                break;
-              case 'log_work':
-                result = await this.ticketManager.logWork(args.data);
-                break;
-              case 'get_work_logs':
-                result = await this.ticketManager.getWorkLogs(args.data);
-                break;
-              case 'get_stats':
-                result = await this.ticketManager.getStats(args.data);
-                break;
-              case 'batch_update':
-                result = await this.ticketManager.batchUpdate(args.data);
-                break;
-              default:
-                throw new Error(`Unknown ticket action: ${args.action}`);
-            }
-            break;
-            
-          case 'uw_projects':
-            switch (args.action) {
-              case 'create':
-                result = await this.projectManager.create(args.data);
-                break;
-              case 'update':
-                result = await this.projectManager.update(args.data);
-                break;
-              case 'query':
-                result = await this.projectManager.query(args.data);
-                break;
-              case 'delete':
-                result = await this.projectManager.delete(args.data);
-                break;
-              case 'add_member':
-                result = await this.projectManager.addMember(args.data);
-                break;
-              case 'remove_member':
-                result = await this.projectManager.removeMember(args.data);
-                break;
-              case 'link_ticket':
-                result = await this.projectManager.linkTicket(args.data);
-                break;
-              case 'unlink_ticket':
-                result = await this.projectManager.unlinkTicket(args.data);
-                break;
-              default:
-                throw new Error(`Unknown project action: ${args.action}`);
-            }
-            break;
-            
-          case 'uw_system_docs':
-            switch (args.action) {
-              case 'create':
-                result = await this.docManager.create(args.data);
-                break;
-              case 'update':
-                result = await this.docManager.update(args.data);
-                break;
-              case 'query':
-                result = await this.docManager.query(args.data);
-                break;
-              case 'delete':
-                result = await this.docManager.delete(args.data);
-                break;
-              case 'add_reference':
-                result = await this.docManager.addReference(args.data);
-                break;
-              case 'remove_reference':
-                result = await this.docManager.removeReference(args.data);
-                break;
-              default:
-                throw new Error(`Unknown document action: ${args.action}`);
-            }
-            break;
-            
-          default:
-            throw new Error(`Unknown tool: ${name}`);
+        // Check connection health before executing
+        const health = await this.checkHealth();
+        if (!health.healthy) {
+          console.error('[UK] Services unhealthy, attempting reconnection...');
+          await this.reconnectServices();
+          
+          // Re-check after reconnection attempt
+          const retryHealth = await this.checkHealth();
+          if (!retryHealth.healthy) {
+            throw new Error('Services are not healthy. Please check connections.');
+          }
         }
-        
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+
+        // Route to appropriate tool handler
+        if (name === 'uk_ticket') {
+          return await ticketTools.handleTool(
+            name, 
+            args, 
+            {
+              redis: this.redis,
+              postgres: this.postgres,
+              qdrant: this.qdrant,
+              embedding: this.embedding
+            }
+          );
+        } else if (name === 'uk_system_doc') {
+          return await systemDocTools.handleTool(
+            name, 
+            args, 
+            {
+              redis: this.redis,
+              postgres: this.postgres,
+              qdrant: this.qdrant,
+              embedding: this.embedding
+            }
+          );
+        } else {
+          throw new Error(`Unknown tool: ${name}`);
+        }
       } catch (error) {
-        logger.error('Tool execution failed', {
-          tool: name,
-          action: args.action,
-          error: error.message,
-          stack: error.stack,
-          context: error.context || {}
-        });
-        
-        const errorResponse = ErrorHandler.createErrorResponse(error, process.env.NODE_ENV !== 'production');
+        console.error(`[UK] Error executing tool ${name}:`, error);
         return {
-          content: [{ type: 'text', text: JSON.stringify(errorResponse, null, 2) }],
-          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `Error: ${error.message}`
+            }
+          ],
+          isError: true
         };
       }
     });
   }
 
-  async start() {
+  async run() {
     try {
+      // Initialize services before starting
       await this.initialize();
+      
+      // Set up stdio transport
       const transport = new StdioServerTransport();
+      
+      // Connect server to transport
       await this.server.connect(transport);
-      logger.info('UnifiedWorkflow v2.1 (Enhanced with Projects & Docs) MCP server started.');
+      
+      console.error('[UK] UnifiedKnowledge MCP server running');
     } catch (error) {
-      logger.error('Failed to start UnifiedWorkflow v2 server:', error);
+      console.error('[UK] Failed to start server:', error);
       process.exit(1);
     }
   }
 }
 
-const server = new UnifiedWorkflowServer();
-server.start();
+// Global server instance for cleanup
+let globalServer = null;
+
+// Handle graceful shutdown
+process.on('SIGINT', async () => {
+  console.error('[UK] Shutting down...');
+  if (globalServer) {
+    if (globalServer.healthCheckInterval) {
+      clearInterval(globalServer.healthCheckInterval);
+    }
+    await globalServer.cleanup();
+  }
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.error('[UK] Shutting down...');
+  if (globalServer) {
+    if (globalServer.healthCheckInterval) {
+      clearInterval(globalServer.healthCheckInterval);
+    }
+    await globalServer.cleanup();
+  }
+  process.exit(0);
+});
+
+// Start the server
+globalServer = new UnifiedKnowledgeServer();
+globalServer.run().catch(console.error);

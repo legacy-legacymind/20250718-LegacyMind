@@ -1,269 +1,755 @@
-// src/managers/redis-manager.js
 import { createClient } from 'redis';
-import { logger } from '../utils/logger.js';
-import { ErrorHandler, ConnectionError, OperationError, ErrorCodes } from '../utils/error-handler.js';
 
 export class RedisManager {
   constructor() {
     this.client = null;
     this.isConnected = false;
+    this.connectionAttempts = 0;
+    this.maxReconnectAttempts = 10;
+    this.reconnectDelay = 1000;
   }
 
   async connect() {
-    const redisUrl = process.env.REDIS_URL || `redis://${process.env.REDIS_HOST || 'localhost'}:${process.env.REDIS_PORT || 6379}`;
-    
-    this.client = createClient({
-      url: redisUrl,
-      password: process.env.REDIS_PASSWORD,
-    });
-
-    this.client.on('error', (err) => {
-      logger.error('Redis Client Error', {
-        error: err.message,
-        url: redisUrl,
-        hasPassword: !!process.env.REDIS_PASSWORD
-      });
-    });
-
     try {
-      await ErrorHandler.withRetry(
-        () => this.client.connect(),
-        {
-          maxRetries: 3,
-          baseDelay: 1000,
-          context: { service: 'redis', url: redisUrl }
-        }
-      );
-      
-      this.isConnected = true;
-      logger.info('Redis connected successfully', {
-        url: redisUrl,
-        hasPassword: !!process.env.REDIS_PASSWORD
-      });
-    } catch (err) {
-      this.isConnected = false;
-      const error = ErrorHandler.handleConnectionError('redis', err, {
-        url: redisUrl,
-        hasPassword: !!process.env.REDIS_PASSWORD
-      });
-      logger.error('Failed to connect to Redis', {
-        error: error.message,
-        context: error.context
-      });
-      throw error;
-    }
-  }
-
-  async hSet(key, data) {
-    if (!this.isConnected) {
-      throw new ConnectionError('Redis is not connected', 'redis', {
-        operation: 'hSet',
-        key
-      });
-    }
-    
-    try {
-      const toSet = {};
-      for (const [field, value] of Object.entries(data)) {
-        toSet[field] = typeof value === 'string' ? value : JSON.stringify(value);
+      if (this.isConnected && this.client) {
+        console.log('[Redis] Already connected');
+        return true;
       }
+
+      const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
       
-      return await ErrorHandler.withRetry(
-        () => this.client.hSet(key, toSet),
-        {
-          maxRetries: 2,
-          context: { operation: 'hSet', key, fieldCount: Object.keys(toSet).length }
+      this.client = createClient({
+        url: redisUrl,
+        socket: {
+          reconnectStrategy: (retries) => {
+            this.connectionAttempts = retries;
+            if (retries > this.maxReconnectAttempts) {
+              console.error(`[Redis] Max reconnection attempts (${this.maxReconnectAttempts}) reached`);
+              return new Error('Max reconnection attempts reached');
+            }
+            const delay = Math.min(retries * this.reconnectDelay, 10000);
+            console.log(`[Redis] Reconnection attempt ${retries}, waiting ${delay}ms`);
+            return delay;
+          },
+          connectTimeout: 10000,
+          keepAlive: 5000
         }
-      );
-    } catch (error) {
-      throw ErrorHandler.handleExternalServiceError('redis', 'hSet', error, {
-        key,
-        fieldCount: Object.keys(data).length
       });
+
+      // Set up event handlers
+      this.client.on('error', (err) => {
+        console.error('[Redis] Client error:', err.message);
+        this.isConnected = false;
+      });
+
+      this.client.on('connect', () => {
+        console.log('[Redis] Connected to Redis server');
+        this.isConnected = true;
+        this.connectionAttempts = 0;
+      });
+
+      this.client.on('ready', () => {
+        console.log('[Redis] Redis client ready for commands');
+      });
+
+      this.client.on('reconnecting', () => {
+        console.log('[Redis] Attempting to reconnect...');
+        this.isConnected = false;
+      });
+
+      this.client.on('end', () => {
+        console.log('[Redis] Connection closed');
+        this.isConnected = false;
+      });
+
+      await this.client.connect();
+      
+      // Test connection with ping
+      const pingResult = await this.client.ping();
+      console.log('[Redis] Connection test:', pingResult);
+      
+      return true;
+    } catch (error) {
+      console.error('[Redis] Connection failed:', error.message);
+      this.isConnected = false;
+      throw new Error(`Redis connection failed: ${error.message}`);
     }
   }
 
-  async hGetAll(key) {
-    if (!this.isConnected) {
-      throw new ConnectionError('Redis is not connected', 'redis', {
-        operation: 'hGetAll',
-        key
-      });
-    }
-    
-    try {
-      return await ErrorHandler.withRetry(
-        () => this.client.hGetAll(key),
-        {
-          maxRetries: 2,
-          context: { operation: 'hGetAll', key }
-        }
-      );
-    } catch (error) {
-      throw ErrorHandler.handleExternalServiceError('redis', 'hGetAll', error, { key });
-    }
-  }
-
-  async sAdd(key, member) {
-    if (!this.isConnected) {
-      throw new ConnectionError('Redis is not connected', 'redis', {
-        operation: 'sAdd',
-        key
-      });
-    }
-    
-    try {
-      return await ErrorHandler.withRetry(
-        () => this.client.sAdd(key, member),
-        {
-          maxRetries: 2,
-          context: { operation: 'sAdd', key, member }
-        }
-      );
-    } catch (error) {
-      throw ErrorHandler.handleExternalServiceError('redis', 'sAdd', error, { key, member });
-    }
-  }
-
-  async sRem(key, member) {
-    if (!this.isConnected) {
-      throw new ConnectionError('Redis is not connected', 'redis', {
-        operation: 'sRem',
-        key
-      });
-    }
-    
-    try {
-      return await ErrorHandler.withRetry(
-        () => this.client.sRem(key, member),
-        {
-          maxRetries: 2,
-          context: { operation: 'sRem', key, member }
-        }
-      );
-    } catch (error) {
-      throw ErrorHandler.handleExternalServiceError('redis', 'sRem', error, { key, member });
-    }
-  }
-
-  async expire(key, seconds) {
-    if (!this.isConnected) {
-      throw new ConnectionError('Redis is not connected', 'redis', {
-        operation: 'expire',
-        key
-      });
-    }
-    
-    try {
-      return await ErrorHandler.withRetry(
-        () => this.client.expire(key, seconds),
-        {
-          maxRetries: 2,
-          context: { operation: 'expire', key, seconds }
-        }
-      );
-    } catch (error) {
-      throw ErrorHandler.handleExternalServiceError('redis', 'expire', error, { key, seconds });
-    }
-  }
-
-  async del(key) {
-    if (!this.isConnected) {
-      throw new ConnectionError('Redis is not connected', 'redis', {
-        operation: 'del',
-        key
-      });
-    }
-    
-    try {
-      return await ErrorHandler.withRetry(
-        () => this.client.del(key),
-        {
-          maxRetries: 2,
-          context: { operation: 'del', key }
-        }
-      );
-    } catch (error) {
-      throw ErrorHandler.handleExternalServiceError('redis', 'del', error, { key });
-    }
-  }
-
-  async lPush(key, value) {
-    if (!this.isConnected) {
-      throw new ConnectionError('Redis is not connected', 'redis', {
-        operation: 'lPush',
-        key
-      });
-    }
-    
-    try {
-      return await ErrorHandler.withRetry(
-        () => this.client.lPush(key, value),
-        {
-          maxRetries: 2,
-          context: { operation: 'lPush', key, value }
-        }
-      );
-    } catch (error) {
-      throw ErrorHandler.handleExternalServiceError('redis', 'lPush', error, { key, value });
-    }
-  }
-
-  async get(key) {
-    if (!this.isConnected) {
-      throw new ConnectionError('Redis is not connected', 'redis', {
-        operation: 'get',
-        key
-      });
-    }
-    
-    try {
-      return await ErrorHandler.withRetry(
-        () => this.client.get(key),
-        {
-          maxRetries: 2,
-          context: { operation: 'get', key }
-        }
-      );
-    } catch (error) {
-      throw ErrorHandler.handleExternalServiceError('redis', 'get', error, { key });
-    }
-  }
-
-  async setex(key, seconds, value) {
-    if (!this.isConnected) {
-      throw new ConnectionError('Redis is not connected', 'redis', {
-        operation: 'setex',
-        key,
-        seconds
-      });
-    }
-    
-    try {
-      return await ErrorHandler.withRetry(
-        () => this.client.setEx(key, seconds, value),
-        {
-          maxRetries: 2,
-          context: { operation: 'setex', key, seconds }
-        }
-      );
-    } catch (error) {
-      throw ErrorHandler.handleExternalServiceError('redis', 'setex', error, { key, seconds });
-    }
-  }
-
-  async close() {
+  async disconnect() {
     if (this.client && this.isConnected) {
       try {
         await this.client.quit();
-        this.isConnected = false;
-        logger.info('Redis connection closed successfully');
+        console.log('[Redis] Disconnected gracefully');
       } catch (error) {
-        logger.error('Error closing Redis connection', {
-          error: error.message
-        });
-        throw ErrorHandler.handleExternalServiceError('redis', 'close', error);
+        console.error('[Redis] Error during disconnect:', error.message);
+        await this.client.disconnect();
       }
+      this.isConnected = false;
+      this.client = null;
     }
+  }
+
+  // Ensure connection is active before operations
+  async ensureConnected() {
+    if (!this.isConnected || !this.client) {
+      await this.connect();
+    }
+    
+    // Test connection is still alive
+    try {
+      await this.client.ping();
+    } catch (error) {
+      console.log('[Redis] Connection lost, reconnecting...');
+      await this.connect();
+    }
+  }
+
+  // Store ticket with MULTI/EXEC transaction for atomicity
+  async storeTicket(ticketId, ticketData) {
+    await this.ensureConnected();
+    
+    try {
+      const key = `ticket:${ticketId}`;
+      const now = new Date().toISOString();
+      const timestamp = Date.now();
+      
+      // Priority scores for sorting
+      const priorityScores = { 'CRITICAL': 4, 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1 };
+      const priorityScore = priorityScores[ticketData.priority] || 0;
+      
+      // Prepare ticket data
+      const ticketHash = {
+        ticket_id: ticketData.ticket_id,
+        title: ticketData.title || '',
+        description: ticketData.description || '',
+        status: ticketData.status || 'OPEN',
+        priority: ticketData.priority || 'MEDIUM',
+        type: ticketData.type || '',
+        category: ticketData.category || '',
+        system: ticketData.system || '',
+        reporter: ticketData.reporter || '',
+        assignee: ticketData.assignee || '',
+        created_at: ticketData.created_at || now,
+        updated_at: now,
+        tags: JSON.stringify(ticketData.tags || []),
+        members: JSON.stringify(ticketData.members || []),
+        linked_tickets: JSON.stringify(ticketData.linked_tickets || []),
+        acceptance_criteria: JSON.stringify(ticketData.acceptance_criteria || []),
+        estimated_hours: String(ticketData.estimated_hours || 0),
+        resolution: ticketData.resolution || '',
+        qdrant_id: ticketData.qdrant_id || ''
+      };
+      
+      // Get old ticket data to clean up old indexes
+      const oldTicket = await this.getTicket(ticketId);
+      
+      // Use MULTI for atomic transaction
+      const multi = this.client.multi();
+      
+      // Store ticket hash
+      multi.hSet(key, ticketHash);
+      
+      // Clean up old indexes if updating
+      if (oldTicket) {
+        // Remove from old status index
+        if (oldTicket.status) {
+          multi.sRem(`index:status:${oldTicket.status.toLowerCase()}`, ticketId);
+        }
+        // Remove from old assignee index
+        if (oldTicket.assignee) {
+          multi.sRem(`index:assignee:${oldTicket.assignee.toLowerCase()}`, ticketId);
+        }
+        // Remove from old type index
+        if (oldTicket.type) {
+          multi.sRem(`index:type:${oldTicket.type.toLowerCase()}`, ticketId);
+        }
+        // Remove from old priority index
+        if (oldTicket.priority) {
+          multi.sRem(`index:priority:${oldTicket.priority.toLowerCase()}`, ticketId);
+        }
+        // Remove from old tag indexes
+        if (oldTicket.tags && oldTicket.tags.length > 0) {
+          for (const tag of oldTicket.tags) {
+            multi.sRem(`index:tag:${tag.toLowerCase()}`, ticketId);
+          }
+        }
+      }
+      
+      // Add to new indexes
+      if (ticketData.status) {
+        multi.sAdd(`index:status:${ticketData.status.toLowerCase()}`, ticketId);
+      }
+      
+      if (ticketData.assignee) {
+        multi.sAdd(`index:assignee:${ticketData.assignee.toLowerCase()}`, ticketId);
+      }
+      
+      if (ticketData.reporter) {
+        multi.sAdd(`index:reporter:${ticketData.reporter.toLowerCase()}`, ticketId);
+      }
+      
+      if (ticketData.type) {
+        multi.sAdd(`index:type:${ticketData.type.toLowerCase()}`, ticketId);
+      }
+      
+      if (ticketData.priority) {
+        multi.sAdd(`index:priority:${ticketData.priority.toLowerCase()}`, ticketId);
+      }
+      
+      // Add to tag indexes
+      if (ticketData.tags && ticketData.tags.length > 0) {
+        for (const tag of ticketData.tags) {
+          multi.sAdd(`index:tag:${tag.toLowerCase()}`, ticketId);
+        }
+      }
+      
+      // Update sorted sets for ordering
+      const createdTimestamp = new Date(ticketData.created_at || now).getTime();
+      multi.zAdd('index:created_at', { score: createdTimestamp, value: ticketId });
+      multi.zAdd('index:updated_at', { score: timestamp, value: ticketId });
+      multi.zAdd('index:priority', { score: priorityScore, value: ticketId });
+      
+      // Set TTL for closed tickets (24 hours)
+      if (['CLOSED', 'CANCELLED'].includes(ticketData.status)) {
+        multi.expire(key, 86400);
+      } else {
+        multi.persist(key);
+      }
+      
+      // Execute transaction
+      const results = await multi.exec();
+      
+      // Check if all operations succeeded
+      const allSucceeded = results.every(result => result[0] === null);
+      if (!allSucceeded) {
+        const errors = results.filter(r => r[0] !== null).map(r => r[0]);
+        throw new Error(`Transaction partially failed: ${errors.join(', ')}`);
+      }
+      
+      console.log(`[Redis] Ticket ${ticketId} stored successfully`);
+      return ticketData;
+      
+    } catch (error) {
+      console.error(`[Redis] Failed to store ticket ${ticketId}:`, error.message);
+      throw new Error(`Failed to store ticket: ${error.message}`);
+    }
+  }
+
+  // Get ticket by ID
+  async getTicket(ticketId) {
+    await this.ensureConnected();
+    
+    try {
+      const key = `ticket:${ticketId}`;
+      const data = await this.client.hGetAll(key);
+      
+      if (!data || Object.keys(data).length === 0) {
+        return null;
+      }
+      
+      // Parse JSON fields
+      return {
+        ticket_id: data.ticket_id,
+        title: data.title,
+        description: data.description,
+        status: data.status,
+        priority: data.priority,
+        type: data.type,
+        category: data.category,
+        system: data.system,
+        reporter: data.reporter,
+        assignee: data.assignee,
+        created_at: data.created_at,
+        updated_at: data.updated_at,
+        tags: JSON.parse(data.tags || '[]'),
+        members: JSON.parse(data.members || '[]'),
+        linked_tickets: JSON.parse(data.linked_tickets || '[]'),
+        acceptance_criteria: JSON.parse(data.acceptance_criteria || '[]'),
+        estimated_hours: parseInt(data.estimated_hours || '0'),
+        resolution: data.resolution,
+        qdrant_id: data.qdrant_id
+      };
+    } catch (error) {
+      console.error(`[Redis] Failed to get ticket ${ticketId}:`, error.message);
+      throw new Error(`Failed to get ticket: ${error.message}`);
+    }
+  }
+
+  // Find tickets by multiple criteria using SINTER
+  async findTicketsBy(filters = {}) {
+    await this.ensureConnected();
+    
+    try {
+      const setKeys = [];
+      
+      // Build set keys from filters
+      if (filters.status) {
+        setKeys.push(`index:status:${filters.status.toLowerCase()}`);
+      }
+      
+      if (filters.assignee) {
+        setKeys.push(`index:assignee:${filters.assignee.toLowerCase()}`);
+      }
+      
+      if (filters.reporter) {
+        setKeys.push(`index:reporter:${filters.reporter.toLowerCase()}`);
+      }
+      
+      if (filters.type) {
+        setKeys.push(`index:type:${filters.type.toLowerCase()}`);
+      }
+      
+      if (filters.priority) {
+        setKeys.push(`index:priority:${filters.priority.toLowerCase()}`);
+      }
+      
+      if (filters.tags && Array.isArray(filters.tags)) {
+        for (const tag of filters.tags) {
+          setKeys.push(`index:tag:${tag.toLowerCase()}`);
+        }
+      }
+      
+      let ticketIds = [];
+      
+      if (setKeys.length === 0) {
+        // No filters - get all tickets from created_at index
+        ticketIds = await this.client.zRange('index:created_at', 0, -1, { REV: true });
+      } else if (setKeys.length === 1) {
+        // Single filter - direct set members
+        ticketIds = await this.client.sMembers(setKeys[0]);
+      } else {
+        // Multiple filters - use SINTER for intersection
+        ticketIds = await this.client.sInter(setKeys);
+      }
+      
+      if (ticketIds.length === 0) {
+        return [];
+      }
+      
+      // Batch fetch tickets using pipeline
+      const pipeline = this.client.pipeline();
+      for (const ticketId of ticketIds) {
+        pipeline.hGetAll(`ticket:${ticketId}`);
+      }
+      
+      const results = await pipeline.exec();
+      const tickets = [];
+      
+      // Process results
+      for (let i = 0; i < results.length; i++) {
+        const [error, data] = results[i];
+        if (!error && data && Object.keys(data).length > 0) {
+          tickets.push({
+            ticket_id: data.ticket_id,
+            title: data.title,
+            description: data.description,
+            status: data.status,
+            priority: data.priority,
+            type: data.type,
+            category: data.category,
+            system: data.system,
+            reporter: data.reporter,
+            assignee: data.assignee,
+            created_at: data.created_at,
+            updated_at: data.updated_at,
+            tags: JSON.parse(data.tags || '[]'),
+            members: JSON.parse(data.members || '[]'),
+            linked_tickets: JSON.parse(data.linked_tickets || '[]'),
+            acceptance_criteria: JSON.parse(data.acceptance_criteria || '[]'),
+            estimated_hours: parseInt(data.estimated_hours || '0'),
+            resolution: data.resolution,
+            qdrant_id: data.qdrant_id
+          });
+        }
+      }
+      
+      // Sort results
+      const sortBy = filters.sortBy || 'priority';
+      const sortOrder = filters.sortOrder || 'desc';
+      
+      tickets.sort((a, b) => {
+        let compareValue = 0;
+        
+        switch (sortBy) {
+          case 'priority':
+            const priorityOrder = { 'CRITICAL': 4, 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1 };
+            compareValue = (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0);
+            break;
+          case 'created_at':
+            compareValue = new Date(b.created_at) - new Date(a.created_at);
+            break;
+          case 'updated_at':
+            compareValue = new Date(b.updated_at) - new Date(a.updated_at);
+            break;
+          default:
+            compareValue = 0;
+        }
+        
+        return sortOrder === 'asc' ? -compareValue : compareValue;
+      });
+      
+      return tickets;
+      
+    } catch (error) {
+      console.error('[Redis] Failed to find tickets:', error.message);
+      throw new Error(`Failed to find tickets: ${error.message}`);
+    }
+  }
+
+  // Delete ticket with transaction
+  async deleteTicket(ticketId) {
+    await this.ensureConnected();
+    
+    try {
+      const key = `ticket:${ticketId}`;
+      
+      // Get ticket data first for index cleanup
+      const ticket = await this.getTicket(ticketId);
+      if (!ticket) {
+        console.log(`[Redis] Ticket ${ticketId} not found for deletion`);
+        return true;
+      }
+      
+      // Use MULTI for atomic deletion
+      const multi = this.client.multi();
+      
+      // Remove from all indexes
+      if (ticket.status) {
+        multi.sRem(`index:status:${ticket.status.toLowerCase()}`, ticketId);
+      }
+      
+      if (ticket.assignee) {
+        multi.sRem(`index:assignee:${ticket.assignee.toLowerCase()}`, ticketId);
+      }
+      
+      if (ticket.reporter) {
+        multi.sRem(`index:reporter:${ticket.reporter.toLowerCase()}`, ticketId);
+      }
+      
+      if (ticket.type) {
+        multi.sRem(`index:type:${ticket.type.toLowerCase()}`, ticketId);
+      }
+      
+      if (ticket.priority) {
+        multi.sRem(`index:priority:${ticket.priority.toLowerCase()}`, ticketId);
+      }
+      
+      // Remove from tag indexes
+      if (ticket.tags && ticket.tags.length > 0) {
+        for (const tag of ticket.tags) {
+          multi.sRem(`index:tag:${tag.toLowerCase()}`, ticketId);
+        }
+      }
+      
+      // Remove from sorted sets
+      multi.zRem('index:created_at', ticketId);
+      multi.zRem('index:updated_at', ticketId);
+      multi.zRem('index:priority', ticketId);
+      
+      // Delete the ticket hash
+      multi.del(key);
+      
+      // Execute transaction
+      await multi.exec();
+      
+      console.log(`[Redis] Ticket ${ticketId} deleted successfully`);
+      return true;
+      
+    } catch (error) {
+      console.error(`[Redis] Failed to delete ticket ${ticketId}:`, error.message);
+      throw new Error(`Failed to delete ticket: ${error.message}`);
+    }
+  }
+
+  // Get all active tickets (optimized with pipeline)
+  async getAllActiveTickets() {
+    await this.ensureConnected();
+    
+    try {
+      // Use SINTER to get active tickets (all except closed/cancelled)
+      const closedIds = await this.client.sMembers('index:status:closed');
+      const cancelledIds = await this.client.sMembers('index:status:cancelled');
+      const excludeIds = new Set([...closedIds, ...cancelledIds]);
+      
+      // Get all ticket IDs sorted by creation date
+      const allIds = await this.client.zRange('index:created_at', 0, -1, { REV: true });
+      const activeIds = allIds.filter(id => !excludeIds.has(id));
+      
+      if (activeIds.length === 0) {
+        return [];
+      }
+      
+      // Batch fetch using pipeline
+      const pipeline = this.client.pipeline();
+      for (const ticketId of activeIds) {
+        pipeline.hGetAll(`ticket:${ticketId}`);
+      }
+      
+      const results = await pipeline.exec();
+      const tickets = [];
+      
+      for (let i = 0; i < results.length; i++) {
+        const [error, data] = results[i];
+        if (!error && data && Object.keys(data).length > 0) {
+          tickets.push({
+            ticket_id: data.ticket_id,
+            title: data.title,
+            description: data.description,
+            status: data.status,
+            priority: data.priority,
+            type: data.type,
+            category: data.category,
+            system: data.system,
+            reporter: data.reporter,
+            assignee: data.assignee,
+            created_at: data.created_at,
+            updated_at: data.updated_at,
+            tags: JSON.parse(data.tags || '[]'),
+            members: JSON.parse(data.members || '[]'),
+            linked_tickets: JSON.parse(data.linked_tickets || '[]'),
+            acceptance_criteria: JSON.parse(data.acceptance_criteria || '[]'),
+            estimated_hours: parseInt(data.estimated_hours || '0'),
+            resolution: data.resolution,
+            qdrant_id: data.qdrant_id
+          });
+        }
+      }
+      
+      return tickets;
+      
+    } catch (error) {
+      console.error('[Redis] Failed to get active tickets:', error.message);
+      throw new Error(`Failed to get active tickets: ${error.message}`);
+    }
+  }
+
+  // Get all closed tickets (optimized with pipeline)
+  async getAllClosedTickets() {
+    await this.ensureConnected();
+    
+    try {
+      // Get closed and cancelled ticket IDs
+      const [closedIds, cancelledIds] = await Promise.all([
+        this.client.sMembers('index:status:closed'),
+        this.client.sMembers('index:status:cancelled')
+      ]);
+      
+      const allClosedIds = [...new Set([...closedIds, ...cancelledIds])];
+      
+      if (allClosedIds.length === 0) {
+        return [];
+      }
+      
+      // Batch fetch using pipeline
+      const pipeline = this.client.pipeline();
+      for (const ticketId of allClosedIds) {
+        pipeline.hGetAll(`ticket:${ticketId}`);
+      }
+      
+      const results = await pipeline.exec();
+      const tickets = [];
+      
+      for (let i = 0; i < results.length; i++) {
+        const [error, data] = results[i];
+        if (!error && data && Object.keys(data).length > 0) {
+          tickets.push({
+            ticket_id: data.ticket_id,
+            title: data.title,
+            description: data.description,
+            status: data.status,
+            priority: data.priority,
+            type: data.type,
+            category: data.category,
+            system: data.system,
+            reporter: data.reporter,
+            assignee: data.assignee,
+            created_at: data.created_at,
+            updated_at: data.updated_at,
+            tags: JSON.parse(data.tags || '[]'),
+            members: JSON.parse(data.members || '[]'),
+            linked_tickets: JSON.parse(data.linked_tickets || '[]'),
+            acceptance_criteria: JSON.parse(data.acceptance_criteria || '[]'),
+            estimated_hours: parseInt(data.estimated_hours || '0'),
+            resolution: data.resolution,
+            qdrant_id: data.qdrant_id
+          });
+        }
+      }
+      
+      // Sort by updated_at descending
+      tickets.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+      
+      return tickets;
+      
+    } catch (error) {
+      console.error('[Redis] Failed to get closed tickets:', error.message);
+      throw new Error(`Failed to get closed tickets: ${error.message}`);
+    }
+  }
+
+  // Get tickets by status (convenience method)
+  async getTicketsByStatus(status) {
+    return this.findTicketsBy({ status });
+  }
+  
+  // Get tickets by assignee (convenience method)
+  async getTicketsByAssignee(assignee) {
+    return this.findTicketsBy({ assignee });
+  }
+  
+  // Get tickets by tag (convenience method)
+  async getTicketsByTag(tag) {
+    return this.findTicketsBy({ tags: [tag] });
+  }
+  
+  // Get recent tickets
+  async getRecentTickets(limit = 10) {
+    await this.ensureConnected();
+    
+    try {
+      const ticketIds = await this.client.zRange('index:created_at', -limit, -1, { REV: true });
+      
+      if (ticketIds.length === 0) {
+        return [];
+      }
+      
+      // Batch fetch using pipeline
+      const pipeline = this.client.pipeline();
+      for (const ticketId of ticketIds) {
+        pipeline.hGetAll(`ticket:${ticketId}`);
+      }
+      
+      const results = await pipeline.exec();
+      const tickets = [];
+      
+      for (let i = 0; i < results.length; i++) {
+        const [error, data] = results[i];
+        if (!error && data && Object.keys(data).length > 0) {
+          tickets.push({
+            ticket_id: data.ticket_id,
+            title: data.title,
+            description: data.description,
+            status: data.status,
+            priority: data.priority,
+            type: data.type,
+            category: data.category,
+            system: data.system,
+            reporter: data.reporter,
+            assignee: data.assignee,
+            created_at: data.created_at,
+            updated_at: data.updated_at,
+            tags: JSON.parse(data.tags || '[]'),
+            members: JSON.parse(data.members || '[]'),
+            linked_tickets: JSON.parse(data.linked_tickets || '[]'),
+            acceptance_criteria: JSON.parse(data.acceptance_criteria || '[]'),
+            estimated_hours: parseInt(data.estimated_hours || '0'),
+            resolution: data.resolution,
+            qdrant_id: data.qdrant_id
+          });
+        }
+      }
+      
+      return tickets;
+      
+    } catch (error) {
+      console.error('[Redis] Failed to get recent tickets:', error.message);
+      throw new Error(`Failed to get recent tickets: ${error.message}`);
+    }
+  }
+  
+  // Get tickets by priority (convenience method)
+  async getTicketsByPriority(priority) {
+    return this.findTicketsBy({ priority });
+  }
+
+  // System documentation operations (Phase 2)
+  async storeSystemDoc(docId, docData) {
+    await this.ensureConnected();
+    
+    try {
+      const key = `uk:doc:${docId}`;
+      const serialized = JSON.stringify(docData);
+      const timestamp = Date.now();
+      
+      // Use MULTI for atomic operation
+      const multi = this.client.multi();
+      
+      multi.hSet(key, {
+        data: serialized,
+        updated_at: new Date().toISOString()
+      });
+      
+      // Add to category index
+      multi.zAdd(`uk:docs:${docData.category}`, { score: timestamp, value: docId });
+      
+      await multi.exec();
+      
+      console.log(`[Redis] System doc ${docId} stored successfully`);
+      return docData;
+      
+    } catch (error) {
+      console.error(`[Redis] Failed to store system doc ${docId}:`, error.message);
+      throw new Error(`Failed to store system doc: ${error.message}`);
+    }
+  }
+
+  async getSystemDoc(docId) {
+    await this.ensureConnected();
+    
+    try {
+      const key = `uk:doc:${docId}`;
+      const data = await this.client.hGet(key, 'data');
+      
+      if (!data) {
+        return null;
+      }
+      
+      return JSON.parse(data);
+      
+    } catch (error) {
+      console.error(`[Redis] Failed to get system doc ${docId}:`, error.message);
+      throw new Error(`Failed to get system doc: ${error.message}`);
+    }
+  }
+
+  // Health check
+  async healthCheck() {
+    try {
+      if (!this.isConnected || !this.client) {
+        return { 
+          status: 'unhealthy', 
+          message: 'Not connected',
+          timestamp: new Date().toISOString() 
+        };
+      }
+      
+      const start = Date.now();
+      await this.client.ping();
+      const latency = Date.now() - start;
+      
+      return { 
+        status: 'healthy', 
+        latency: `${latency}ms`,
+        connected: this.isConnected,
+        timestamp: new Date().toISOString() 
+      };
+    } catch (error) {
+      return { 
+        status: 'unhealthy', 
+        error: error.message,
+        connected: false,
+        timestamp: new Date().toISOString() 
+      };
+    }
+  }
+
+  // Get connection status
+  getConnectionStatus() {
+    return {
+      connected: this.isConnected,
+      attempts: this.connectionAttempts,
+      maxAttempts: this.maxReconnectAttempts
+    };
   }
 }

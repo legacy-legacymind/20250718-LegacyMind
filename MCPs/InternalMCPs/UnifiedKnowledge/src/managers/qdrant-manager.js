@@ -1,423 +1,235 @@
-// src/managers/qdrant-manager.js
 import { QdrantClient } from '@qdrant/js-client-rest';
-import { OpenAI } from 'openai';
-import { v4 as uuidv4 } from 'uuid';
-import { logger } from '../utils/logger.js';
-import { ErrorHandler, ConnectionError, ExternalServiceError, ErrorCodes } from '../utils/error-handler.js';
 
 export class QdrantManager {
   constructor() {
     this.client = null;
-    this.openai = null;
     this.isConnected = false;
+    this.collections = {
+      tickets: 'uk_tickets',
+      docs: 'uk_system_docs'
+    };
   }
 
   async connect() {
-    const qdrantUrl = process.env.QDRANT_URL || `http://${process.env.QDRANT_HOST || 'localhost'}:${process.env.QDRANT_PORT || 6333}`;
-    
-    logger.info('Connecting to Qdrant', {
-      url: qdrantUrl,
-      hasApiKey: !!process.env.QDRANT_API_KEY,
-      hasOpenAIKey: !!process.env.OPENAI_API_KEY
-    });
-    
-    this.client = new QdrantClient({ 
-      url: qdrantUrl, 
-      apiKey: process.env.QDRANT_API_KEY,
-      checkCompatibility: false 
-    });
-    
-    if (!process.env.OPENAI_API_KEY) {
-      throw new ConnectionError(
-        'OpenAI API key is required for embedding operations',
-        'openai',
-        { operation: 'connect' }
-      );
-    }
-    
-    this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
     try {
-      const result = await ErrorHandler.withRetry(
-        () => this.client.getCollections(),
-        {
-          maxRetries: 3,
-          baseDelay: 2000,
-          context: { service: 'qdrant', url: qdrantUrl }
-        }
-      );
+      const host = process.env.QDRANT_HOST || 'localhost';
+      const port = process.env.QDRANT_PORT || 6333;
+      const apiKey = process.env.QDRANT_API_KEY;
       
+      this.client = new QdrantClient({
+        url: `http://${host}:${port}`,
+        apiKey
+      });
+
+      // Test connection
+      await this.client.getCollections();
+      
+      console.error('[Qdrant] Connected to Qdrant');
       this.isConnected = true;
-      logger.info('Qdrant connected successfully', {
-        url: qdrantUrl,
-        collections: result.collections.map(c => c.name)
-      });
       
-      // Ensure the 'memories' collection exists
-      const hasMemoriesCollection = result.collections.some(c => c.name === 'memories');
-      if (!hasMemoriesCollection) {
-        await this.ensureMemoriesCollection();
-      }
-    } catch (err) {
-      this.isConnected = false;
-      const error = ErrorHandler.handleConnectionError('qdrant', err, {
-        url: qdrantUrl,
-        hasApiKey: !!process.env.QDRANT_API_KEY
-      });
-      logger.error('Failed to connect to Qdrant', {
-        error: error.message,
-        context: error.context
-      });
+      // Ensure collections exist
+      await this.ensureCollections();
+      
+      return true;
+    } catch (error) {
+      console.error('[Qdrant] Connection failed:', error);
       throw error;
     }
   }
 
-  async ensureMemoriesCollection() {
+  async ensureCollections() {
     try {
-      await this.client.createCollection('memories', {
-        vectors: { size: 1536, distance: 'Cosine' },
-      });
-      logger.info('Created "memories" collection in Qdrant');
-    } catch (error) {
-      if (error.message.includes('already exists')) {
-        logger.debug('Memories collection already exists');
-      } else {
-        throw ErrorHandler.handleExternalServiceError('qdrant', 'createCollection', error, {
-          collection: 'memories'
-        });
+      // Check and create tickets collection
+      const collections = await this.client.getCollections();
+      const existingCollections = collections.collections.map(c => c.name);
+      
+      if (!existingCollections.includes(this.collections.tickets)) {
+        await this.createCollection(this.collections.tickets);
       }
+      
+      if (!existingCollections.includes(this.collections.docs)) {
+        await this.createCollection(this.collections.docs);
+      }
+      
+      console.error('[Qdrant] Collections verified');
+    } catch (error) {
+      console.error('[Qdrant] Failed to ensure collections:', error);
+      throw error;
     }
   }
 
-  async embedAndStoreTicket(ticket, options = { throwOnFailure: false }) {
-    logger.info('Starting ticket embedding process', {
-      ticketId: ticket.ticket_id,
-      isConnected: this.isConnected,
-      status: ticket.status
-    });
-    
-    if (!this.isConnected) {
-      const error = new ConnectionError(
-        'Qdrant not connected, cannot embed ticket',
-        'qdrant',
-        { operation: 'embedAndStoreTicket', ticketId: ticket.ticket_id }
-      );
-      
-      if (options.throwOnFailure) {
-        throw error;
-      } else {
-        logger.warn('Qdrant not connected, skipping embedding', {
-          ticketId: ticket.ticket_id,
-          error: error.message
-        });
-        return { success: false, error: error.message, skipped: true };
-      }
-    }
-
+  async createCollection(collectionName) {
     try {
-      const textToEmbed = `
-        Ticket ID: ${ticket.ticket_id}
-        Title: ${ticket.title}
-        Type: ${ticket.type}
-        System: ${ticket.system}
-        Description: ${ticket.description}
-        Resolution: ${ticket.resolution || 'No resolution notes.'}
-      `.trim();
-      
-      logger.debug('Prepared text for embedding', {
-        ticketId: ticket.ticket_id,
-        textLength: textToEmbed.length,
-        preview: textToEmbed.substring(0, 200)
-      });
-
-      // Create embedding with retry logic
-      const embeddingResponse = await ErrorHandler.withRetry(
-        () => this.openai.embeddings.create({
-          model: 'text-embedding-3-small',
-          input: textToEmbed,
-        }),
-        {
-          maxRetries: 2,
-          baseDelay: 1000,
-          context: { service: 'openai', operation: 'embedding', ticketId: ticket.ticket_id }
-        }
-      );
-
-      const embedding = embeddingResponse.data[0].embedding;
-      logger.debug('Embedding created successfully', {
-        ticketId: ticket.ticket_id,
-        vectorLength: embedding.length
-      });
-
-      const pointId = uuidv4();
-      
-      // Store in Qdrant with retry logic
-      await ErrorHandler.withRetry(
-        () => this.client.upsert('memories', {
-          wait: true,
-          points: [
-            {
-              id: pointId,
-              vector: embedding,
-              payload: {
-                type: 'ticket',
-                source: 'UnifiedWorkflow',
-                ticket_id: ticket.ticket_id,
-                content: textToEmbed,
-                created_at: ticket.created_at,
-                completed_at: ticket.updated_at,
-                reporter: ticket.reporter,
-                assignee: ticket.assignee,
-              },
-            },
-          ],
-        }),
-        {
-          maxRetries: 2,
-          baseDelay: 1000,
-          context: { service: 'qdrant', operation: 'upsert', ticketId: ticket.ticket_id }
-        }
-      );
-
-      logger.info('Ticket embedded and stored successfully', {
-        ticketId: ticket.ticket_id,
-        pointId,
-        vectorLength: embedding.length
+      await this.client.createCollection(collectionName, {
+        vectors: {
+          size: 1536, // OpenAI text-embedding-3-small dimension
+          distance: 'Cosine'
+        },
+        optimizers_config: {
+          default_segment_number: 2
+        },
+        replication_factor: 1
       });
       
-      return { success: true, pointId, vectorLength: embedding.length };
+      console.error(`[Qdrant] Created collection: ${collectionName}`);
     } catch (error) {
-      const contextualError = ErrorHandler.handleExternalServiceError(
-        error.message.includes('openai') || error.message.includes('embedding') ? 'openai' : 'qdrant',
-        'embedAndStoreTicket',
-        error,
-        { ticketId: ticket.ticket_id }
-      );
-      
-      logger.error('Ticket embedding failed', {
-        ticketId: ticket.ticket_id,
-        error: contextualError.message,
-        errorType: error.constructor.name,
-        stack: error.stack
-      });
-      
-      if (options.throwOnFailure) {
-        throw contextualError;
-      } else {
-        return { 
-          success: false, 
-          error: contextualError.message, 
-          errorCode: contextualError.code,
-          skipped: false 
-        };
-      }
+      console.error(`[Qdrant] Failed to create collection ${collectionName}:`, error);
+      throw error;
     }
   }
 
-  async indexProject(projectId, name, description, payload, options = { throwOnFailure: false }) {
-    if (!this.isConnected) {
-      const error = new ConnectionError(
-        'Qdrant not connected, cannot index project',
-        'qdrant',
-        { operation: 'indexProject', projectId }
-      );
-      
-      if (options.throwOnFailure) {
-        throw error;
-      } else {
-        logger.warn('Qdrant not connected, skipping project indexing', {
-          projectId,
-          error: error.message
-        });
-        return { success: false, error: error.message, skipped: true };
-      }
-    }
-
+  async upsertTicketEmbedding(ticketId, embedding, ticketData) {
     try {
-      const text = `${name} ${description || ''}`.trim();
-      
-      const embedding = await ErrorHandler.withRetry(
-        () => this.openai.embeddings.create({
-          model: 'text-embedding-ada-002',
-          input: text,
-        }),
-        {
-          maxRetries: 2,
-          context: { service: 'openai', operation: 'embedding', projectId }
+      const point = {
+        id: ticketId, // Use ticket_id string directly (UUID format)
+        vector: embedding,
+        payload: {
+          ticket_id: ticketData.ticket_id,
+          title: ticketData.title,
+          type: ticketData.type,
+          category: ticketData.category,
+          system: ticketData.system,
+          reporter: ticketData.reporter,
+          assignee: ticketData.assignee,
+          status: ticketData.status,
+          priority: ticketData.priority,
+          tags: ticketData.tags || [],
+          created_at: ticketData.created_at,
+          updated_at: ticketData.updated_at,
+          resolution: ticketData.resolution,
+          description: ticketData.description || ''
         }
-      );
+      };
 
-      const pointId = uuidv4();
-      await ErrorHandler.withRetry(
-        () => this.client.upsert('memories', {
-          points: [
-            {
-              id: pointId,
-              vector: embedding.data[0].embedding,
-              payload: {
-                ...payload,
-                type: 'project',
-                text,
-                indexed_at: new Date().toISOString()
-              }
-            }
-          ]
-        }),
-        {
-          maxRetries: 2,
-          context: { service: 'qdrant', operation: 'upsert', projectId }
-        }
-      );
-
-      logger.info('Project indexed successfully', {
-        projectId,
-        pointId,
-        textLength: text.length
+      await this.client.upsert(this.collections.tickets, {
+        wait: true,
+        points: [point]
       });
-      
-      return { success: true, pointId };
+
+      console.error(`[Qdrant] Upserted embedding for ticket ${ticketId}`);
+      return true;
     } catch (error) {
-      const contextualError = ErrorHandler.handleExternalServiceError(
-        error.message.includes('openai') || error.message.includes('embedding') ? 'openai' : 'qdrant',
-        'indexProject',
-        error,
-        { projectId }
-      );
-      
-      logger.error('Project indexing failed', {
-        projectId,
-        error: contextualError.message
-      });
-      
-      if (options.throwOnFailure) {
-        throw contextualError;
-      } else {
-        return { 
-          success: false, 
-          error: contextualError.message, 
-          errorCode: contextualError.code,
-          skipped: false 
-        };
-      }
+      console.error('[Qdrant] Failed to upsert ticket embedding:', error);
+      throw error;
     }
   }
 
-  async deleteProject(projectId, options = { throwOnFailure: false }) {
-    if (!this.isConnected) {
-      const error = new ConnectionError(
-        'Qdrant not connected, cannot delete project',
-        'qdrant',
-        { operation: 'deleteProject', projectId }
-      );
-      
-      if (options.throwOnFailure) {
-        throw error;
-      } else {
-        logger.warn('Qdrant not connected, skipping project deletion', {
-          projectId,
-          error: error.message
-        });
-        return { success: false, error: error.message, skipped: true };
-      }
-    }
-
+  async searchTickets(queryEmbedding, limit = 10, filter = null) {
     try {
-      await ErrorHandler.withRetry(
-        () => this.client.delete('memories', {
-          filter: {
-            must: [
-              { key: 'project_id', match: { value: projectId } },
-              { key: 'type', match: { value: 'project' } }
-            ]
-          }
-        }),
-        {
-          maxRetries: 2,
-          context: { service: 'qdrant', operation: 'delete', projectId }
-        }
-      );
+      const searchParams = {
+        vector: queryEmbedding,
+        limit,
+        with_payload: true,
+        with_vector: false
+      };
 
-      logger.info('Project removed from Qdrant successfully', { projectId });
-      return { success: true };
-    } catch (error) {
-      const contextualError = ErrorHandler.handleExternalServiceError('qdrant', 'deleteProject', error, {
-        projectId
-      });
-      
-      logger.error('Project deletion from Qdrant failed', {
-        projectId,
-        error: contextualError.message
-      });
-      
-      if (options.throwOnFailure) {
-        throw contextualError;
-      } else {
-        return { 
-          success: false, 
-          error: contextualError.message, 
-          errorCode: contextualError.code,
-          skipped: false 
-        };
+      if (filter) {
+        searchParams.filter = filter;
       }
+
+      const results = await this.client.search(this.collections.tickets, searchParams);
+      
+      return results.map(result => ({
+        score: result.score,
+        ...result.payload
+      }));
+    } catch (error) {
+      console.error('[Qdrant] Failed to search tickets:', error);
+      throw error;
     }
   }
 
-  async indexDocument(docId, title, content, payload) {
-    if (!this.isConnected) {
-      logger.warn('Qdrant is not connected. Skipping document indexing.');
-      return;
-    }
-
+  async deleteTicketEmbedding(ticketId) {
     try {
-      const text = `${title} ${content || ''}`.trim().substring(0, 8000); // Limit text length
-      const embedding = await this.openai.embeddings.create({
-        model: 'text-embedding-ada-002',
-        input: text,
+      await this.client.delete(this.collections.tickets, {
+        wait: true,
+        points: [ticketId] // Use ticket_id string directly
       });
-
-      const pointId = uuidv4();
-      await this.client.upsert('memories', {
-        points: [
-          {
-            id: pointId,
-            vector: embedding.data[0].embedding,
-            payload: {
-              ...payload,
-              type: 'document',
-              text,
-              indexed_at: new Date().toISOString()
-            }
-          }
-        ]
-      });
-
-      logger.info(`Document ${docId} indexed in Qdrant with ID: ${pointId}`);
+      
+      console.error(`[Qdrant] Deleted embedding for ticket ${ticketId}`);
+      return true;
     } catch (error) {
-      logger.error(`Failed to index document in Qdrant: ${error.message}`);
-      // Non-critical error, don't throw
+      console.error('[Qdrant] Failed to delete ticket embedding:', error);
+      throw error;
     }
   }
 
-  async deleteDocument(docId) {
-    if (!this.isConnected) {
-      logger.warn('Qdrant is not connected. Skipping document deletion.');
-      return;
-    }
-
+  // System documentation operations (Phase 2)
+  async upsertDocEmbedding(docId, embedding, docData) {
     try {
-      await this.client.delete('memories', {
-        filter: {
-          must: [
-            { key: 'doc_id', match: { value: docId } },
-            { key: 'type', match: { value: 'document' } }
-          ]
+      const point = {
+        id: docId, // Use doc_id string directly (UUID format)
+        vector: embedding,
+        payload: {
+          doc_id: docData.doc_id,
+          title: docData.title,
+          category: docData.category,
+          system: docData.system,
+          version: docData.version,
+          valid_from: docData.valid_from,
+          valid_to: docData.valid_to,
+          created_at: docData.created_at,
+          updated_at: docData.updated_at,
+          content: docData.content || ''
         }
+      };
+
+      await this.client.upsert(this.collections.docs, {
+        wait: true,
+        points: [point]
       });
 
-      logger.info(`Document ${docId} removed from Qdrant`);
+      console.error(`[Qdrant] Upserted embedding for doc ${docId}`);
+      return true;
     } catch (error) {
-      logger.error(`Failed to delete document from Qdrant: ${error.message}`);
-      // Non-critical error, don't throw
+      console.error('[Qdrant] Failed to upsert doc embedding:', error);
+      throw error;
     }
+  }
+
+  async searchDocs(queryEmbedding, limit = 10, filter = null) {
+    try {
+      const searchParams = {
+        vector: queryEmbedding,
+        limit,
+        with_payload: true,
+        with_vector: false
+      };
+
+      if (filter) {
+        searchParams.filter = filter;
+      }
+
+      const results = await this.client.search(this.collections.docs, searchParams);
+      
+      return results.map(result => ({
+        score: result.score,
+        ...result.payload
+      }));
+    } catch (error) {
+      console.error('[Qdrant] Failed to search docs:', error);
+      throw error;
+    }
+  }
+
+  // Health check
+  async healthCheck() {
+    try {
+      await this.client.getCollections();
+      return { status: 'healthy', timestamp: new Date().toISOString() };
+    } catch (error) {
+      return { 
+        status: 'unhealthy', 
+        error: error.message, 
+        timestamp: new Date().toISOString() 
+      };
+    }
+  }
+
+  // Deprecated - no longer needed as we use UUID strings directly
+  // Qdrant supports UUID strings as point IDs
+  generatePointId(id) {
+    console.warn('[Qdrant] generatePointId is deprecated - use UUID strings directly');
+    return id; // Return the ID as-is
   }
 }

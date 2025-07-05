@@ -8,7 +8,7 @@ The core philosophy is **"If the user has to call it manually, we've failed."** 
 
 ## Features
 
-- **Automatic Dual-Write Persistence**: Thoughts are saved to PostgreSQL for structured storage and to Qdrant for semantic vector search.
+- **Automatic Persistence**: Thoughts are saved to Redis for fast, in-memory storage.
 - **Automatic Session Management**: Thinking sessions are created and managed automatically per instance.
 - **Automatic Mode Detection**: The MCP automatically detects the mode of a thought (e.g., `debug`, `design`, `learn`).
 - **Automatic Pattern Analysis**: The system analyzes recent thoughts to detect patterns like "thinking loops" or "confusion."
@@ -49,7 +49,7 @@ The MCP is built with a modular architecture:
 
 - `index.js`: The main server entry point.
 - `core/unified-intelligence.js`: The central class that orchestrates all logic.
-- `core/persistence.js`: Handles all database interactions (PostgreSQL and Qdrant).
+- `core/unified-intelligence.js`: Handles all Redis interactions and thought persistence.
 - `core/session-manager.js`: Manages the lifecycle of thinking sessions.
 - `core/mode-detector.js`: Detects the mode of a thought.
 - `core/pattern-analyzer.js`: Analyzes thought patterns.
@@ -66,9 +66,7 @@ The MCP is built with a modular architecture:
 2.  **Environment Variables:**
     Create a `.env` file in the root of this MCP's directory with the following variables:
     ```
-    DATABASE_URL=postgresql://user:password@host:port/database
-    QDRANT_URL=http://host:port
-    # QDRANT_API_KEY=your_qdrant_api_key (if needed)
+    REDIS_URL=redis://localhost:6379
     ```
 
 3.  **Run the MCP:**
@@ -97,16 +95,15 @@ npm run test:watch
 
 ### Recent Updates
 
-- **July 3, 2025**: Upgraded Qdrant client from 1.11.0 to 1.14.1 for compatibility with updated database infrastructure
-  - Updated health monitor to use `versionInfo()` instead of deprecated `getClusterInfo()` method
-  - All core Qdrant operations (upsert, search, scroll, delete, collections) remain fully compatible
-  - No breaking changes for persistence layer functionality
+- **Redis-Only Architecture**: Simplified to use only Redis for all storage needs
+  - Removed all PostgreSQL and Qdrant dependencies
+  - Streamlined persistence layer for better performance
+  - All thoughts are now stored in Redis with automatic expiration
 
 ## Deployment Checklist
 
 - [ ] Ensure all environment variables are set in `.env` or deployment environment
-- [ ] Verify database connectivity (PostgreSQL and Redis)
-- [ ] Verify Qdrant connectivity if using vector search
+- [ ] Verify Redis connectivity
 - [ ] Run test suite to ensure all tools are functioning
 - [ ] Check Docker image builds successfully
 - [ ] Verify network connectivity in containerized environment
@@ -118,7 +115,7 @@ npm run test:watch
 - **API Keys**: Store API keys securely in environment variables
 - **Network Isolation**: When containerized, ensure proper network isolation
 - **Input Validation**: All tool inputs are validated before processing
-- **SQL Injection**: Using parameterized queries to prevent SQL injection
+- **Data Validation**: All inputs are validated before storage in Redis
 - **Rate Limiting**: Consider implementing rate limiting for production deployments
 
 ## Performance Optimization
@@ -127,28 +124,18 @@ npm run test:watch
 - **Batch Processing**: Thoughts can be processed in batches (configurable via `THOUGHT_BATCH_SIZE`)
 - **Session Cleanup**: Automatic cleanup of old sessions (configurable via `SESSION_CLEANUP_INTERVAL`)
 - **Caching**: Redis is used for session caching with configurable TTL
-- **Query Optimization**: Database queries are optimized with proper indexes
+- **Redis Optimization**: Using efficient Redis data structures and patterns
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Database Connection Errors**
-   - Check `DATABASE_URL` is correctly formatted
-   - Verify PostgreSQL is running and accessible
-   - Check network connectivity if using containers
-
-2. **Redis Connection Errors**
+1. **Redis Connection Errors**
    - Verify `REDIS_URL` is correct
    - Ensure Redis server is running
    - Check for firewall/network issues
 
-3. **Qdrant Connection Errors**
-   - Verify `QDRANT_URL` and `QDRANT_API_KEY`
-   - Check Qdrant server health
-   - Note: Embedding generation requires `OPENAI_API_KEY`
-
-4. **Tool Execution Errors**
+2. **Tool Execution Errors**
    - Check logs for detailed error messages
    - Verify all required environment variables are set
    - Run test suite to isolate issues
