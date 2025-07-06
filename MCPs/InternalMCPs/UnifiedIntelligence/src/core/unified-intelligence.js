@@ -1,7 +1,7 @@
 import { SessionManager } from './session-manager.js';
 import { ModeDetector } from './mode-detector.js';
 import { AutoCaptureMonitor } from './auto-capture/monitor.js';
-import ioredis from 'ioredis';
+import { redisManager } from '../shared/redis-manager.js';
 import { logger } from '../utils/logger.js';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -14,11 +14,10 @@ export class UnifiedIntelligence {
     this.autoCapture = null; // Will be initialized after Redis connection
     this.isShuttingDown = false;
     this.currentInstanceId = null; // Track the current instance for this connection
+    this.initializationPromise = null;
     
-    // Initialize Redis connection
-    if (config.redisUrl) {
-      this.initializeRedis(config.redisUrl);
-    }
+    // Store the initialization promise
+    this.initializationPromise = this.initializeRedis();
     
     // Add process exit handlers for proper cleanup
     this.setupCleanupHandlers();
@@ -26,28 +25,13 @@ export class UnifiedIntelligence {
     logger.info('UnifiedIntelligence core initialized (Redis-only mode).');
   }
 
-  async initializeRedis(redisUrl) {
+  async initializeRedis() {
     try {
-      this.redis = new ioredis(redisUrl, {
-        retryDelayOnFailure: 1000,
-        maxRetriesPerRequest: 3,
-        lazyConnect: true,
-        // Add connection timeout
-        connectTimeout: 10000,
-        // Add error handling
-        enableOfflineQueue: false
-      });
+      // Initialize the shared Redis manager
+      await redisManager.initialize();
       
-      // Add Redis error handlers
-      this.redis.on('error', (error) => {
-        logger.error('Redis connection error', { error: error.message });
-      });
-      
-      this.redis.on('ready', () => {
-        logger.info('Redis connection ready');
-      });
-      
-      await this.redis.connect();
+      // Get the Redis client from the manager
+      this.redis = redisManager.getClient();
       
       // Initialize SessionManager with Redis client
       this.sessions = new SessionManager(this.redis);
@@ -55,7 +39,7 @@ export class UnifiedIntelligence {
       // Initialize AutoCaptureMonitor
       this.autoCapture = new AutoCaptureMonitor(this.redis, this);
       
-      logger.info('Redis connection established successfully');
+      logger.info('Redis connection established successfully through RedisManager');
     } catch (error) {
       logger.error('Failed to initialize Redis connection', {
         error: error.message
@@ -70,6 +54,11 @@ export class UnifiedIntelligence {
     const { action = 'capture', thought, options = {} } = args;
     
     logger.info(`Received 'think' call with action '${action}'.`);
+    
+    // Ensure Redis is initialized before proceeding
+    if (this.initializationPromise) {
+      await this.initializationPromise;
+    }
 
     try {
       switch (action) {
@@ -293,8 +282,7 @@ export class UnifiedIntelligence {
         'sessionId', sessionId
       );
       
-      // Add stream trimming to prevent infinite growth (keep last 1000 entries)
-      pipeline.xtrim(streamKey, 'MAXLEN', '~', 1000);
+      // Stream trimming removed for performance - handled by cleanup service
 
       // Store in Redis hash for direct access with instance namespace
       const thoughtKey = `${instanceId}:thought:${thoughtData.id}`;
@@ -617,7 +605,7 @@ export class UnifiedIntelligence {
           throw error;
         }
         
-        const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000); // Cap at 5 seconds
+        const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 2000); // Cap at 2 seconds
         logger.warn(`${operationName} failed, retrying in ${delayMs}ms`, {
           attempt,
           maxRetries,

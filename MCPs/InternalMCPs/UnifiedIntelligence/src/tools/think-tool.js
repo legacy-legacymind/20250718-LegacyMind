@@ -1,4 +1,10 @@
+// src/tools/think-tool.js
+import { redisManager } from '../shared/redis-manager.js';
+import { ThinkSchemas } from '../shared/validators.js';
+import { KEY_SCHEMA } from '../shared/key-schema.js';
+import { rateLimiter } from '../shared/rate-limiter.js';
 import { logger } from '../utils/logger.js';
+import crypto from 'crypto';
 
 export const UI_THINK_TOOL = {
   name: 'ui_think',
@@ -67,206 +73,227 @@ Philosophy: "Keep it simple" - Just capture thoughts to Redis, nothing else.`,
 };
 
 export class ThinkTool {
-  constructor(intelligence) {
-    this.intelligence = intelligence;
-  }
-
-  async handle(args) {
-    const { action = 'capture' } = args;
-    
-    logger.info(`ThinkTool: Handling action '${action}'`);
-
-    try {
-      switch (action) {
-        case 'capture':
-          return await this.handleCapture(args);
-        
-        case 'status':
-          return await this.handleStatus(args);
-        
-        case 'check_in':
-          return await this.handleCheckIn(args);
-        
-        case 'monitor':
-          return await this.handleMonitor(args);
-        
-        case 'help':
-          return await this.handleHelp();
-        
-        default:
-          throw new Error(`Unknown action: ${action}`);
-      }
-    } catch (error) {
-      logger.error(`ThinkTool: Error during action '${action}'`, { error: error.message });
-      throw error;
-    }
-  }
-
-  async handleCapture(args) {
-    const { thought, options = {} } = args;
-    
-    if (!thought || typeof thought !== 'string') {
-      throw new Error('A non-empty "thought" string is required for the "capture" action.');
-    }
-    
-    if (!this.intelligence.sessions) {
-      throw new Error('Session manager not initialized. Redis connection required.');
-    }
-    
-    // Use current instance or get active session
-    let instanceId = this.intelligence.currentInstanceId;
-    let sessionId;
-    
-    if (instanceId) {
-      // Get session for current instance
-      const session = await this.intelligence.sessions.getCurrentOrCreate(instanceId);
-      sessionId = session.id;
-    } else {
-      // Fallback to active session
-      const session = await this.intelligence.sessions.getActiveSession();
-      if (!session || !session.instanceId) {
-        throw new Error('No active session found. Please check in first with an instance identity.');
-      }
-      instanceId = session.instanceId;
-      sessionId = session.id;
-    }
-    
-    // Capture thought and update session activity
-    const result = await this.intelligence.captureThought({ 
-      thought, 
-      options, 
-      sessionId,
-      instanceId 
-    });
-    
-    // Update session activity after capturing thought
-    await this.intelligence.sessions.updateActivity(instanceId);
-    
-    return result;
-  }
-
-  async handleStatus(args) {
-    // Use current instance if available
-    if (this.intelligence.currentInstanceId) {
-      const session = await this.intelligence.sessions.getCurrentOrCreate(this.intelligence.currentInstanceId);
-      return await this.intelligence.getSessionStatus(session.id);
-    } else {
-      // Fallback to active session
-      const session = await this.intelligence.sessions.getActiveSession();
-      if (!session) {
-        return {
-          status: 'no_active_session',
-          message: 'No active session found.'
+    constructor(intelligence) {
+        this.intelligence = intelligence;
+        this.rateLimits = {
+            capture: { max: 100, window: 60 }, // 100/minute
+            check_in: { max: 10, window: 3600 } // 10/hour
         };
-      }
-      return await this.intelligence.getSessionStatus(session.id);
     }
-  }
 
-  async handleCheckIn(args) {
-    const { identity } = args;
-    if (!identity || !identity.name) {
-      throw new Error('Identity information with name is required for check_in action');
-    }
-    return await this.intelligence.initializeFederation(identity);
-  }
+    async handle(args) {
+        const { action = 'capture', identity } = args;
+        const instanceId = identity?.name || this.intelligence.currentInstanceId || 'anonymous';
 
-  async handleMonitor(args) {
-    const { operation = 'status', thresholds, options = {} } = args;
-    
-    if (!this.intelligence.autoCapture) {
-      throw new Error('Auto-capture monitor not initialized');
-    }
-    
-    switch (operation) {
-      case 'start':
-        const instanceForStart = this.intelligence.currentInstanceId || options.instance;
-        if (!instanceForStart) {
-          throw new Error('Instance ID required to start monitor');
-        }
-        return await this.intelligence.autoCapture.start(instanceForStart);
-        
-      case 'stop':
-        const instanceForStop = this.intelligence.currentInstanceId || options.instance;
-        if (!instanceForStop) {
-          throw new Error('Instance ID required to stop monitor');
-        }
-        return await this.intelligence.autoCapture.stop(instanceForStop);
-        
-      case 'status':
-        const instanceForStatus = this.intelligence.currentInstanceId || options.instance;
-        if (!instanceForStatus) {
-          throw new Error('Instance ID required for monitor status');
-        }
-        return await this.intelligence.autoCapture.status(instanceForStatus);
-        
-      case 'thresholds':
-        if (!thresholds) {
-          throw new Error('Thresholds required for update operation');
-        }
-        return await this.intelligence.autoCapture.updateThresholds(thresholds);
-        
-      default:
-        throw new Error(`Unknown monitor operation: ${operation}`);
-    }
-  }
+        logger.info(`ThinkTool: Handling action '${action}' for instance '${instanceId}'`);
 
-  async handleHelp() {
-    return {
-      tool: 'ui_think',
-      version: '2.0',
-      description: 'UnifiedIntelligence: Simple thought capture to Redis',
-      actions: {
-        capture: {
-          description: 'Capture a thought to Redis',
-          required: ['thought'],
-          optional: ['options'],
-          example: '{ "action": "capture", "thought": "your thought content", "options": { "confidence": 0.8, "tags": ["design", "api"] } }'
-        },
-        status: {
-          description: 'Get current session status',
-          required: [],
-          optional: [],
-          example: '{ "action": "status" }'
-        },
-        check_in: {
-          description: 'Initialize instance with identity',
-          required: ['identity'],
-          optional: [],
-          example: '{ "action": "check_in", "identity": { "name": "CCI", "id": "cci-001", "type": "intelligence", "role": "specialist" } }'
-        },
-        monitor: {
-          description: 'Control auto-capture monitoring',
-          operations: {
-            start: 'Start monitoring for an instance',
-            stop: 'Stop monitoring for an instance', 
-            status: 'Get monitoring status',
-            thresholds: 'Update monitoring thresholds'
-          },
-          examples: [
-            '{ "action": "monitor", "operation": "start" }',
-            '{ "action": "monitor", "operation": "stop" }',
-            '{ "action": "monitor", "operation": "status" }',
-            '{ "action": "monitor", "operation": "thresholds", "thresholds": { "tokenUsage": 1000, "timeInterval": 10, "messageCount": 20 } }'
-          ]
-        },
-        help: {
-          description: 'Get this help information',
-          required: [],
-          optional: [],
-          example: '{ "action": "help" }'
+        try {
+            // Rate limiting
+            if (this.rateLimits[action]) {
+                const limited = await rateLimiter.check(
+                    instanceId,
+                    action,
+                    this.rateLimits[action]
+                );
+                
+                if (limited) {
+                    throw new Error(`Rate limit exceeded for action '${action}'`);
+                }
+            }
+        
+            switch (action) {
+                case 'capture':
+                    return await this.handleCapture(args, instanceId);
+                
+                case 'status':
+                    return await this.handleStatus(args, instanceId);
+                
+                case 'check_in':
+                    return await this.handleCheckIn(args);
+                
+                case 'monitor':
+                    return await this.handleMonitor(args, instanceId);
+                
+                case 'help':
+                    return await this.handleHelp();
+                
+                default:
+                    throw new Error(`Unknown action: ${action}`);
+            }
+        } catch (error) {
+            logger.error(`ThinkTool: Error during action '${action}'`, { error: error.message, instanceId });
+            throw error;
         }
-      },
-      features: {
-        'Mode Detection': 'Automatically detects conversation mode (convo, design, debug, task, learn, decision, test)',
-        'Redis Storage': 'Fast, simple thought capture directly to Redis',
-        'Session Management': 'Lightweight in-memory session tracking',
-        'Instance Support': 'Multi-instance federation support',
-        'Auto-Capture': 'Automatic monitoring and capture based on configurable thresholds'
-      },
-      philosophy: '"Keep it simple" - Just capture thoughts to Redis, nothing else.'
-    };
-  }
+    }
+
+    async handleCapture(args, instanceId) {
+        const validated = ThinkSchemas.capture.parse({ ...args, instanceId });
+        const correlationId = crypto.randomUUID();
+        
+        return redisManager.execute('default', async () => {
+            const client = redisManager.connections.get('default');
+            const keyConfig = KEY_SCHEMA.THOUGHTS_STREAM(validated.instanceId);
+            
+            const transaction = client.multi();
+            
+            transaction.xAdd(keyConfig.key, '*', {
+                content: validated.thought,
+                confidence: validated.options?.confidence || 0.5,
+                tags: JSON.stringify(validated.options?.tags || []),
+                timestamp: new Date().toISOString(),
+                source_agent_id: validated.instanceId,
+                correlationId
+            });
+            
+            transaction.expire(keyConfig.key, keyConfig.ttl);
+            
+            const results = await transaction.exec();
+            
+            // Verify atomic transaction succeeded
+            if (!results || results.some(r => r === null)) {
+                throw new Error('Failed to capture thought atomically');
+            }
+            
+            return {
+                success: true,
+                thoughtId: results[0],
+                correlationId,
+                message: 'Thought captured successfully'
+            };
+        });
+    }
+
+    async handleStatus(args, instanceId) {
+        if (instanceId === 'anonymous') {
+             return {
+                status: 'no_active_session',
+                message: 'No active session found. Please check in first.'
+            };
+        }
+        const session = await this.intelligence.sessions.getCurrentOrCreate(instanceId);
+        return await this.intelligence.getSessionStatus(session.id);
+    }
+
+    async handleCheckIn(args) {
+        const validated = ThinkSchemas.check_in.parse(args);
+        const correlationId = crypto.randomUUID();
+        const instanceName = validated.identity.name;
+        
+        return redisManager.execute('default', async () => {
+            const client = redisManager.connections.get('default');
+            const publisher = redisManager.connections.get('pubsub');
+            
+            const transaction = client.multi();
+            
+            const identityKeyConfig = KEY_SCHEMA.IDENTITY(instanceName);
+            transaction.hSet(identityKeyConfig.key, {
+                ...validated.identity,
+                lastCheckIn: new Date().toISOString(),
+                correlationId
+            });
+            
+            // In v3, session management is simplified. We'll just set the identity.
+            // The concept of a separate session object is removed for simplicity.
+            
+            transaction.expire(identityKeyConfig.key, identityKeyConfig.ttl);
+            
+            const results = await transaction.exec();
+            
+            // Verify atomic transaction succeeded
+            if (!results || results.some(r => r === null)) {
+                throw new Error('Failed to complete check-in atomically');
+            }
+            
+            await publisher.publish('federation:events', JSON.stringify({
+                event: 'check_in_complete',
+                instanceId: instanceName,
+                correlationId,
+                timestamp: new Date().toISOString()
+            }));
+
+            // Set current instance on successful check-in
+            this.intelligence.currentInstanceId = instanceName;
+            
+            return {
+                success: true,
+                instanceId: instanceName,
+                correlationId,
+                federation_initialized: true,
+                next_steps: [
+                    'Run bash date/time for timestamp',
+                    'Use ui_inject to load context if needed'
+                ],
+                message: 'Federation check-in complete. Instance initialized.'
+            };
+        });
+    }
+
+    async handleMonitor(args, instanceId) {
+        const { operation = 'status', thresholds } = args;
+        
+        if (!this.intelligence.autoCapture) {
+            throw new Error('Auto-capture monitor not initialized');
+        }
+        if (instanceId === 'anonymous') {
+            throw new Error('Instance ID required for monitor operations');
+        }
+        
+        switch (operation) {
+            case 'start':
+                return await this.intelligence.autoCapture.start(instanceId);
+            case 'stop':
+                return await this.intelligence.autoCapture.stop(instanceId);
+            case 'status':
+                return await this.intelligence.autoCapture.status(instanceId);
+            case 'thresholds':
+                if (!thresholds) {
+                    throw new Error('Thresholds required for update operation');
+                }
+                return await this.intelligence.autoCapture.updateThresholds(thresholds);
+            default:
+                throw new Error(`Unknown monitor operation: ${operation}`);
+        }
+    }
+
+    async handleHelp() {
+        return {
+            tool: 'ui_think',
+            version: '3.0',
+            description: 'UnifiedIntelligence: Secure thought capture to Redis with rate limiting and atomic operations.',
+            actions: {
+                capture: {
+                    description: 'Capture a thought to Redis stream',
+                    required: ['thought'],
+                    optional: ['options', 'instanceId'],
+                    example: '{ "action": "capture", "thought": "your thought", "instanceId": "CCI" }'
+                },
+                status: {
+                    description: 'Get current instance status',
+                    example: '{ "action": "status", "instanceId": "CCI" }'
+                },
+                check_in: {
+                    description: 'Initialize federation for instance (identity only)',
+                    required: ['identity'],
+                    example: '{ "action": "check_in", "identity": { "name": "CCI", "type": "intelligence", "role": "specialist" } }',
+                    note: 'Focuses on federation initialization. Use ui_inject for context loading.'
+                },
+                monitor: {
+                    description: 'Control auto-capture monitoring',
+                    operations: {
+                        start: 'Start monitoring',
+                        stop: 'Stop monitoring',
+                        status: 'Get monitoring status',
+                        thresholds: 'Update thresholds'
+                    },
+                    example: '{ "action": "monitor", "operation": "start", "instanceId": "CCI" }'
+                },
+                help: {
+                    description: 'Get this help information',
+                    example: '{ "action": "help" }'
+                }
+            }
+        };
+    }
 }
 
 export function createThinkTool(intelligence) {

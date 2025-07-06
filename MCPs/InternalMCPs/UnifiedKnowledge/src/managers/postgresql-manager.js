@@ -37,25 +37,72 @@ class PostgreSQLManager {
     }
   }
 
+  async verifySchema() {
+    try {
+      const query = `
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_type = 'BASE TABLE'
+        AND table_name IN ('archived_tickets', 'embeddings', 'migrations')
+        ORDER BY table_name;
+      `;
+      
+      const result = await this.pool.query(query);
+      const existingTables = result.rows.map(row => row.table_name);
+      const requiredTables = ['archived_tickets', 'embeddings', 'migrations'];
+      const missingTables = requiredTables.filter(table => !existingTables.includes(table));
+      
+      if (missingTables.length > 0) {
+        console.warn('[PostgreSQL] Missing tables:', missingTables);
+        return {
+          valid: false,
+          missingTables,
+          existingTables,
+          message: `Missing required tables: ${missingTables.join(', ')}`
+        };
+      }
+      
+      console.log('[PostgreSQL] Schema verified successfully');
+      return {
+        valid: true,
+        existingTables,
+        message: 'All required tables present'
+      };
+    } catch (error) {
+      console.error('[PostgreSQL] Schema verification failed:', error);
+      return {
+        valid: false,
+        error: error.message,
+        message: 'Failed to verify schema'
+      };
+    }
+  }
+
   async archiveTicket(ticketData) {
     const query = `
       INSERT INTO archived_tickets (
-        id, title, description, status, priority, 
+        id, title, description, status, priority, type,
         assignee, reporter, created_at, updated_at, 
-        resolved_at, labels, comments, metadata
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        resolved_at, closed_at, labels, comments, metadata, tags, members, linked_tickets
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
       ON CONFLICT (id) DO UPDATE SET
         title = EXCLUDED.title,
         description = EXCLUDED.description,
         status = EXCLUDED.status,
         priority = EXCLUDED.priority,
+        type = EXCLUDED.type,
         assignee = EXCLUDED.assignee,
         reporter = EXCLUDED.reporter,
         updated_at = EXCLUDED.updated_at,
         resolved_at = EXCLUDED.resolved_at,
+        closed_at = EXCLUDED.closed_at,
         labels = EXCLUDED.labels,
         comments = EXCLUDED.comments,
-        metadata = EXCLUDED.metadata
+        metadata = EXCLUDED.metadata,
+        tags = EXCLUDED.tags,
+        members = EXCLUDED.members,
+        linked_tickets = EXCLUDED.linked_tickets
     `;
 
     const values = [
@@ -64,14 +111,19 @@ class PostgreSQLManager {
       ticketData.description,
       ticketData.status,
       ticketData.priority,
+      ticketData.type,
       ticketData.assignee,
       ticketData.reporter,
       ticketData.created_at,
       ticketData.updated_at,
       ticketData.resolved_at,
+      ticketData.closed_at,
       ticketData.labels ? JSON.stringify(ticketData.labels) : null,
       ticketData.comments ? JSON.stringify(ticketData.comments) : null,
-      ticketData.metadata ? JSON.stringify(ticketData.metadata) : null
+      ticketData.metadata ? JSON.stringify(ticketData.metadata) : null,
+      ticketData.tags ? JSON.stringify(ticketData.tags) : null,
+      ticketData.members ? JSON.stringify(ticketData.members) : null,
+      ticketData.linked_tickets ? JSON.stringify(ticketData.linked_tickets) : null
     ];
 
     try {

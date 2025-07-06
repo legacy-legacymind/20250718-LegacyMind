@@ -14,6 +14,7 @@ import {
   TicketType,
   LinkType
 } from '../shared/validators.js';
+import ResponseHandler from '../shared/response-handler.js';
 
 export const ticketTools = {
   getToolDefinitions() {
@@ -187,18 +188,20 @@ export const ticketTools = {
       if (error.errors) {
         const validationErrors = error.errors.map(err => 
           `${err.path.join('.')}: ${err.message}`
-        ).join(', ');
+        );
         
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify({
-                success: false,
-                error: `Validation failed: ${validationErrors}`,
-                code: 'VALIDATION_ERROR',
-                details: error.errors
-              }, null, 2)
+              text: JSON.stringify(
+                ResponseHandler.validationError(
+                  `Validation failed for ${action}`,
+                  validationErrors
+                ),
+                null,
+                2
+              )
             }
           ]
         };
@@ -208,11 +211,15 @@ export const ticketTools = {
         content: [
           {
             type: "text",
-            text: JSON.stringify({
-              success: false,
-              error: error.message,
-              code: error.code || 'UNKNOWN_ERROR'
-            }, null, 2)
+            text: JSON.stringify(
+              ResponseHandler.error(
+                error.message || `Failed to ${action} ticket`,
+                error,
+                error.code || 'UNKNOWN_ERROR'
+              ),
+              null,
+              2
+            )
           }
         ]
       };
@@ -286,25 +293,23 @@ export const ticketTools = {
     const ticketEmbedding = await embedding.generateEmbedding(embeddingText);
     
     // Store in Qdrant for vector search
-    await qdrant.upsertTicketEmbedding(ticketId, ticketEmbedding, {
-      title: ticket.title,
-      description: ticket.description,
-      status: ticket.status,
-      priority: ticket.priority,
-      type: ticket.type,
-      tags: ticket.tags
-    });
+    await qdrant.upsertTicketEmbedding(ticketId, ticketEmbedding, ticket);
     
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify({
-            success: true,
-            ticket_id: ticketId,
-            message: "Ticket created successfully",
-            ticket: ticket
-          }, null, 2)
+          text: JSON.stringify(
+            ResponseHandler.success(
+              "Ticket created successfully",
+              {
+                ticket_id: ticketId,
+                ticket: ticket
+              }
+            ),
+            null,
+            2
+          )
         }
       ]
     };
@@ -374,14 +379,7 @@ export const ticketTools = {
       const embeddingText = `${updatedTicket.title} ${updatedTicket.description || ''} ${(updatedTicket.tags || []).join(' ')}`;
       const ticketEmbedding = await embedding.generateEmbedding(embeddingText);
       
-      await qdrant.upsertTicketEmbedding(ticket_id, ticketEmbedding, {
-        title: updatedTicket.title,
-        description: updatedTicket.description,
-        status: updatedTicket.status,
-        priority: updatedTicket.priority,
-        type: updatedTicket.type,
-        tags: updatedTicket.tags
-      });
+      await qdrant.upsertTicketEmbedding(ticket_id, ticketEmbedding, updatedTicket);
     }
     
     // Archive if closed
@@ -393,14 +391,21 @@ export const ticketTools = {
       content: [
         {
           type: "text",
-          text: JSON.stringify({
-            success: true,
-            ticket_id: ticket_id,
-            message: "Ticket updated successfully",
-            ticket: updatedTicket,
-            changes: changes,
-            archived: wasOpen && isClosed
-          }, null, 2)
+          text: JSON.stringify(
+            ResponseHandler.success(
+              "Ticket updated successfully",
+              {
+                ticket_id: ticket_id,
+                ticket: updatedTicket,
+                changes: changes
+              },
+              {
+                archived: wasOpen && isClosed
+              }
+            ),
+            null,
+            2
+          )
         }
       ]
     };
@@ -438,11 +443,11 @@ export const ticketTools = {
         content: [
           {
             type: "text",
-            text: JSON.stringify({
-              success: false,
-              error: `Ticket ${ticket_id} not found`,
-              code: 'NOT_FOUND'
-            }, null, 2)
+            text: JSON.stringify(
+              ResponseHandler.notFound('Ticket', ticket_id),
+              null,
+              2
+            )
           }
         ]
       };
@@ -458,11 +463,19 @@ export const ticketTools = {
       content: [
         {
           type: "text",
-          text: JSON.stringify({
-            success: true,
-            ticket: response,
-            source: source
-          }, null, 2)
+          text: JSON.stringify(
+            ResponseHandler.success(
+              "Ticket retrieved successfully",
+              {
+                ticket: response
+              },
+              {
+                source: source
+              }
+            ),
+            null,
+            2
+          )
         }
       ]
     };
@@ -498,14 +511,22 @@ export const ticketTools = {
         content: [
           {
             type: "text",
-            text: JSON.stringify({
-              success: true,
-              query: validatedData.query,
-              total: results.length,
-              limit: limit,
-              offset: offset,
-              tickets: results
-            }, null, 2)
+            text: JSON.stringify(
+              ResponseHandler.success(
+                "Search completed successfully",
+                {
+                  tickets: results,
+                  total: results.length
+                },
+                {
+                  query: validatedData.query,
+                  limit: limit,
+                  offset: offset
+                }
+              ),
+              null,
+              2
+            )
           }
         ]
       };
@@ -614,13 +635,21 @@ export const ticketTools = {
       content: [
         {
           type: "text",
-          text: JSON.stringify({
-            success: true,
-            tickets: paginatedTickets,
-            total: total,
-            limit: limit,
-            offset: offset
-          }, null, 2)
+          text: JSON.stringify(
+            ResponseHandler.success(
+              "Tickets listed successfully",
+              {
+                tickets: paginatedTickets,
+                total: total
+              },
+              {
+                limit: limit,
+                offset: offset
+              }
+            ),
+            null,
+            2
+          )
         }
       ]
     };
@@ -754,13 +783,18 @@ export const ticketTools = {
       content: [
         {
           type: "text",
-          text: JSON.stringify({
-            success: true,
-            ticket_id: ticket_id,
-            member: member,
-            role: role || 'viewer',
-            message: "Member added successfully"
-          }, null, 2)
+          text: JSON.stringify(
+            ResponseHandler.success(
+              "Member added successfully",
+              {
+                ticket_id: ticket_id,
+                member: member,
+                role: role || 'viewer'
+              }
+            ),
+            null,
+            2
+          )
         }
       ]
     };
@@ -866,14 +900,19 @@ export const ticketTools = {
       content: [
         {
           type: "text",
-          text: JSON.stringify({
-            success: true,
-            link_id: linkId,
-            source_ticket_id: source_ticket_id,
-            target_ticket_id: target_ticket_id,
-            link_type: link_type,
-            message: "Tickets linked successfully"
-          }, null, 2)
+          text: JSON.stringify(
+            ResponseHandler.success(
+              "Tickets linked successfully",
+              {
+                link_id: linkId,
+                source_ticket_id: source_ticket_id,
+                target_ticket_id: target_ticket_id,
+                link_type: link_type
+              }
+            ),
+            null,
+            2
+          )
         }
       ]
     };

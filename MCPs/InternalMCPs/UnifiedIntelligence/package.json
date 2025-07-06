@@ -5,10 +5,17 @@
   "type": "module",
   "main": "src/index.js",
   "bin": {
-    "unified-intelligence": "src/index.js"
+    "unified-intelligence": "src/index.js",
+    "unified-intelligence-connector": "src/connector.js"
   },
   "scripts": {
     "start": "node src/index.js",
+    "start:server": "pm2 start ecosystem.config.js",
+    "stop:server": "pm2 stop unified-intelligence",
+    "restart:server": "pm2 restart unified-intelligence",
+    "logs:server": "pm2 logs unified-intelligence",
+    "status:server": "pm2 status",
+    "connector": "node src/connector.js",
     "test": "node test.js",
     "test:watch": "nodemon test.js",
     "docker:build": "docker build -t unified-intelligence .",
@@ -32,6 +39,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.14.0",
     "ioredis": "^5.3.2",
+    "isomorphic-dompurify": "^2.16.0",
+    "pm2": "^5.3.0",
     "uuid": "^9.0.0",
     "zod": "^3.25.74"
   },

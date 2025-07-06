@@ -1,5 +1,8 @@
 import { logger } from '../utils/logger.js';
-import { validateInput } from '../shared/validators.js';
+import { RememberSchemas } from '../shared/validators.js';
+import { redisManager } from '../shared/redis-manager.js';
+import { KEY_SCHEMA, applyTTL } from '../shared/key-schema.js';
+import { rateLimiter } from '../shared/rate-limiter.js';
 
 /**
  * RememberTool - A separate tool for managing persistent memory
@@ -16,13 +19,22 @@ export class RememberTool {
     this.redis = redis;
     this.sessionManager = sessionManager;
     this.memoryTypes = ['identity', 'context', 'curiosity'];
+    this.rateLimits = {
+      create: { max: 10, window: 60 },
+      search: { max: 30, window: 60 },
+      update: { max: 20, window: 60 },
+      delete: { max: 10, window: 60 }
+    };
   }
 
   /**
    * Main entry point for the remember tool
    */
   async execute(args) {
-    const { action, memory_type, content, query, options = {} } = args;
+    // Handle parameter mapping - tool provides 'type' and 'operation'
+    const action = args.action || args.operation;
+    const memory_type = args.memory_type || args.type;
+    const { content, query, options = {} } = args;
 
     logger.info(`RememberTool executing action: ${action}, type: ${memory_type}`);
 
@@ -74,30 +86,47 @@ export class RememberTool {
     // Get current instance
     const instanceId = await this.getCurrentInstanceId();
     
+    // Check rate limit
+    const isRateLimited = await rateLimiter.check(instanceId, 'memory_create', this.rateLimits.create);
+    if (isRateLimited) {
+      throw new Error('Rate limit exceeded for memory creation');
+    }
+    
     // Generate unique ID for this memory entry
     const memoryId = this.generateMemoryId();
     const timestamp = new Date().toISOString();
+    const correlationId = options.correlationId || `mem-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
-    // Create memory object
+    // Create memory object with security tracking
     const memoryData = {
       id: memoryId,
       type: memory_type,
       content: content.trim(),
       tags: Array.isArray(options.tags) ? options.tags : [],
-      metadata: options.metadata || {},
+      metadata: {
+        ...options.metadata,
+        correlationId,
+        sourceAgent: options.sourceAgent || instanceId
+      },
       created_at: timestamp,
       updated_at: timestamp,
       instance_id: instanceId
     };
 
     try {
-      // Store in Redis using appropriate data structure
-      const pipeline = this.redis.pipeline();
-      
-      // 1. Store full memory object in hash
-      const memoryKey = `${instanceId}:memory:${memory_type}:${memoryId}`;
-      pipeline.hset(memoryKey, this.flattenForRedis(memoryData));
-      pipeline.expire(memoryKey, 90 * 24 * 60 * 60); // 90 days
+      // Use RedisManager for atomic operations
+      return await redisManager.execute(async (client) => {
+        const pipeline = client.pipeline();
+        
+        // 1. Store full memory object in hash (atomic operation)
+        const memoryKey = `${instanceId}:memory:${memory_type}:${memoryId}`;
+        const flatData = this.flattenForRedis(memoryData);
+        
+        // Use HSET with field-value pairs for atomic operation
+        for (const [field, value] of Object.entries(flatData)) {
+          pipeline.hset(memoryKey, field, value);
+        }
+        pipeline.expire(memoryKey, 90 * 24 * 60 * 60); // 90 days
       
       // 2. Add to memory type index (sorted set by timestamp)
       const indexKey = `${instanceId}:memory_index:${memory_type}`;
@@ -117,21 +146,32 @@ export class RememberTool {
         }
       }
       
-      // Execute pipeline
-      await pipeline.exec();
-      
-      logger.info(`Memory created: ${memory_type}/${memoryId} for instance ${instanceId}`);
-      
-      return {
-        success: true,
-        memory: {
-          id: memoryId,
-          type: memory_type,
-          preview: content.substring(0, 100) + (content.length > 100 ? '...' : ''),
-          created_at: timestamp
-        },
-        message: `${memory_type} memory created successfully`
-      };
+        // Execute pipeline atomically
+        const results = await pipeline.exec();
+        
+        // Verify all operations succeeded
+        const failed = results.some(([err]) => err !== null);
+        if (failed) {
+          throw new Error('Failed to create memory atomically');
+        }
+        
+        logger.info(`Memory created: ${memory_type}/${memoryId} for instance ${instanceId}`, {
+          correlationId,
+          sourceAgent: memoryData.metadata.sourceAgent
+        });
+        
+        return {
+          success: true,
+          memory: {
+            id: memoryId,
+            type: memory_type,
+            preview: content.substring(0, 100) + (content.length > 100 ? '...' : ''),
+            created_at: timestamp,
+            correlationId
+          },
+          message: `${memory_type} memory created successfully`
+        };
+      });
       
     } catch (error) {
       logger.error('Failed to create memory', { error: error.message, memory_type, instanceId });
@@ -150,65 +190,115 @@ export class RememberTool {
     const instanceId = await this.getCurrentInstanceId();
     const limit = options.limit || 10;
     const offset = options.offset || 0;
+    
+    // Check rate limit
+    const isRateLimited = await rateLimiter.check(instanceId, 'memory_search', this.rateLimits.search);
+    if (isRateLimited) {
+      throw new Error('Rate limit exceeded for memory search');
+    }
 
     try {
-      // Get all memory IDs for this type
-      const indexKey = `${instanceId}:memory_index:${memory_type}`;
-      const memoryIds = await this.redis.zrevrange(indexKey, offset, offset + limit - 1);
-      
-      if (memoryIds.length === 0) {
-        return {
-          results: [],
-          total: 0,
-          query,
-          memory_type
-        };
-      }
+      return await redisManager.execute(async (client) => {
+        // Client is already provided by execute
+        
+        // Get all memory IDs for this type
+        const indexKey = `${instanceId}:memory_index:${memory_type}`;
+        const memoryIds = await client.zrevrange(indexKey, offset, offset + limit - 1);
+        
+        if (memoryIds.length === 0) {
+          return {
+            results: [],
+            total: 0,
+            query,
+            memory_type
+          };
+        }
 
-      // Search through memories
-      const searchKey = `${instanceId}:memory_search:${memory_type}`;
-      const results = [];
-      const queryLower = query.toLowerCase();
-      
-      for (const memoryId of memoryIds) {
-        const searchContent = await this.redis.hget(searchKey, memoryId);
-        if (searchContent && searchContent.toLowerCase().includes(queryLower)) {
-          // Get full memory data
+        // Use pipeline for batch operations
+        const pipeline = client.pipeline();
+        const searchKey = `${instanceId}:memory_search:${memory_type}`;
+        const queryLower = query.toLowerCase();
+        
+        // Batch get search content
+        for (const memoryId of memoryIds) {
+          pipeline.hget(searchKey, memoryId);
+        }
+        
+        const searchResults = await pipeline.exec();
+        const matchingIds = [];
+        
+        // Find matching IDs
+        searchResults.forEach(([err, searchContent], idx) => {
+          if (!err && searchContent && searchContent.toLowerCase().includes(queryLower)) {
+            matchingIds.push(memoryIds[idx]);
+          }
+        });
+        
+        // Batch get full memory data for matches
+        const memPipeline = client.pipeline();
+        for (const memoryId of matchingIds) {
           const memoryKey = `${instanceId}:memory:${memory_type}:${memoryId}`;
-          const memoryData = await this.redis.hgetall(memoryKey);
-          
-          if (memoryData && Object.keys(memoryData).length > 0) {
+          memPipeline.hgetall(memoryKey);
+        }
+        
+        const memoryResults = await memPipeline.exec();
+        const results = [];
+        
+        memoryResults.forEach(([err, memoryData]) => {
+          if (!err && memoryData && Object.keys(memoryData).length > 0) {
             results.push(this.parseMemoryData(memoryData));
           }
-        }
-      }
+        });
 
-      // Also search by tags if provided
-      if (options.tags && Array.isArray(options.tags)) {
-        for (const tag of options.tags) {
-          const tagKey = `${instanceId}:memory_tags:${memory_type}:${tag}`;
-          const taggedIds = await this.redis.smembers(tagKey);
+        // Also search by tags if provided (using pipeline)
+        if (options.tags && Array.isArray(options.tags)) {
+          const tagPipeline = client.pipeline();
           
-          for (const memoryId of taggedIds) {
-            if (!results.find(r => r.id === memoryId)) {
+          for (const tag of options.tags) {
+            const tagKey = `${instanceId}:memory_tags:${memory_type}:${tag}`;
+            tagPipeline.smembers(tagKey);
+          }
+          
+          const tagResults = await tagPipeline.exec();
+          const allTaggedIds = new Set();
+          
+          tagResults.forEach(([err, taggedIds]) => {
+            if (!err && taggedIds) {
+              taggedIds.forEach(id => allTaggedIds.add(id));
+            }
+          });
+          
+          // Get memory data for tagged IDs not already in results
+          const newTaggedIds = Array.from(allTaggedIds).filter(
+            id => !results.find(r => r.id === id)
+          );
+          
+          if (newTaggedIds.length > 0) {
+            const tagMemPipeline = client.pipeline();
+            
+            for (const memoryId of newTaggedIds) {
               const memoryKey = `${instanceId}:memory:${memory_type}:${memoryId}`;
-              const memoryData = await this.redis.hgetall(memoryKey);
-              
-              if (memoryData && Object.keys(memoryData).length > 0) {
+              tagMemPipeline.hgetall(memoryKey);
+            }
+            
+            const tagMemResults = await tagMemPipeline.exec();
+            
+            tagMemResults.forEach(([err, memoryData]) => {
+              if (!err && memoryData && Object.keys(memoryData).length > 0) {
                 results.push(this.parseMemoryData(memoryData));
               }
-            }
+            });
           }
         }
-      }
 
-      return {
-        results: results.slice(0, limit),
-        total: results.length,
-        query,
-        memory_type,
-        instance_id: instanceId
-      };
+        return {
+          results: results.slice(0, limit),
+          total: results.length,
+          query,
+          memory_type,
+          instance_id: instanceId
+        };
+      });
 
     } catch (error) {
       logger.error('Failed to search memories', { error: error.message, memory_type, query });
@@ -297,6 +387,12 @@ export class RememberTool {
 
     const instanceId = await this.getCurrentInstanceId();
     
+    // Check rate limit
+    const isRateLimited = await rateLimiter.check(instanceId, 'memory_update', this.rateLimits.update);
+    if (isRateLimited) {
+      throw new Error('Rate limit exceeded for memory update');
+    }
+    
     try {
       const memoryKey = `${instanceId}:memory:${memory_type}:${id}`;
       const exists = await this.redis.exists(memoryKey);
@@ -373,6 +469,12 @@ export class RememberTool {
     }
 
     const instanceId = await this.getCurrentInstanceId();
+    
+    // Check rate limit
+    const isRateLimited = await rateLimiter.check(instanceId, 'memory_delete', this.rateLimits.delete);
+    if (isRateLimited) {
+      throw new Error('Rate limit exceeded for memory delete');
+    }
     
     try {
       const memoryKey = `${instanceId}:memory:${memory_type}:${id}`;
@@ -542,12 +644,13 @@ export class RememberTool {
   }
 
   /**
-   * Generate a unique memory ID
+   * Generate a unique memory ID with correlation tracking
    */
   generateMemoryId() {
     const timestamp = Date.now().toString(36);
     const random = Math.random().toString(36).substring(2, 8);
-    return `${timestamp}-${random}`;
+    const processId = process.pid.toString(36);
+    return `${timestamp}-${processId}-${random}`;
   }
 
   /**

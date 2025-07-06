@@ -1,269 +1,296 @@
-import { promises as fs } from 'fs';
-import path from 'path';
 import { z } from 'zod';
+import { logger } from '../utils/logger.js';
+import { rateLimiter } from '../shared/rate-limiter.js';
+import { v4 as uuidv4 } from 'uuid';
 
-const MAX_CONTEXT_SIZE = 50000; // 50KB limit for injected context
-const ALLOWED_EXTENSIONS = ['.md', '.txt', '.json', '.yml', '.yaml'];
+/**
+ * InjectTool - A lightweight router for knowledge injection
+ * 
+ * This tool acts as a simple client for the UnifiedKnowledge MCP.
+ * It has no knowledge of filesystem or data storage - it delegates
+ * all operations to the appropriate UnifiedKnowledge tools.
+ * 
+ * Architecture:
+ * - Single responsibility: Route requests to UnifiedKnowledge
+ * - No filesystem access
+ * - No direct Redis/database operations
+ * - Service-oriented design
+ */
 
-// Schema for the ui_inject tool
+// Simplified schema - no federation, no filesystem paths
 export const injectSchema = z.object({
   name: z.literal('ui_inject'),
-  description: z.literal('Inject context or expert knowledge into the current session'),
+  description: z.literal('Injects context from the knowledge base via direct lookup or semantic search'),
   inputSchema: z.object({
     type: z.literal('object'),
     properties: z.object({
+      action: z.object({
+        type: z.literal('string'),
+        enum: z.array(z.literal('inject').or(z.literal('help'))),
+        description: z.literal('Action to perform'),
+        default: z.literal('inject')
+      }).optional(),
       type: z.object({
         type: z.literal('string'),
-        enum: z.array(z.literal('context').or(z.literal('expert'))),
-        description: z.literal('Type of injection: context for general knowledge, expert for specialized modules')
+        enum: z.array(z.literal('expert').or(z.literal('document'))),
+        description: z.literal('The type of knowledge to inject')
       }),
-      source: z.object({
+      lookup: z.object({
         type: z.literal('string'),
-        description: z.literal('For context: file path or URL. For expert: module name (e.g., "docker", "mcp", "postgresql")')
-      }),
-      validate: z.object({
-        type: z.literal('boolean'),
-        description: z.literal('Whether to validate the injected content'),
-        default: z.literal(true)
+        description: z.literal('The identifier for a direct lookup (e.g., "Docker:Networking" or a document ID)')
+      }).optional(),
+      query: z.object({
+        type: z.literal('string'),
+        description: z.literal('A natural language query for a semantic search')
       }).optional()
     }),
-    required: z.array(z.literal('type').or(z.literal('source')))
+    oneOf: z.array(
+      z.object({ required: z.array(z.literal('type').and(z.literal('lookup'))) })
+        .or(z.object({ required: z.array(z.literal('type').and(z.literal('query'))) }))
+    )
   })
 });
 
-// Expert modules configuration
-const EXPERT_MODULES = {
-  docker: {
-    path: '/Users/samuelatagana/Library/Mobile Documents/iCloud~md~obsidian/Documents/LegacyMind/Experts/Docker',
-    files: ['Docker_Expert_Guide.md', 'Docker_Best_Practices.md'],
-    description: 'Docker containerization expertise'
+/**
+ * Input validation schema
+ */
+const InjectInputSchema = z.object({
+  action: z.enum(['inject', 'help']).default('inject'),
+  type: z.enum(['expert', 'document']),
+  lookup: z.string().optional(),
+  query: z.string().optional()
+}).refine(
+  (data) => {
+    // Must have either lookup OR query, but not both
+    return (data.lookup && !data.query) || (!data.lookup && data.query);
   },
-  mcp: {
-    path: '/Users/samuelatagana/Library/Mobile Documents/iCloud~md~obsidian/Documents/LegacyMind/Experts/MCP',
-    files: ['MCP_Development_Operations_Hub.md', 'MCP_Architecture.md'],
-    description: 'Model Context Protocol development expertise'
-  },
-  postgresql: {
-    path: '/Users/samuelatagana/Library/Mobile Documents/iCloud~md~obsidian/Documents/LegacyMind/Experts/PostgreSQL',
-    files: ['PostgreSQL_Expert_Guide.md', 'PostgreSQL_Performance.md'],
-    description: 'PostgreSQL database expertise'
-  },
-  qdrant: {
-    path: '/Users/samuelatagana/Library/Mobile Documents/iCloud~md~obsidian/Documents/LegacyMind/Experts/Qdrant',
-    files: ['Qdrant_Expert_Guide.md', 'Qdrant_Vector_Operations.md'],
-    description: 'Qdrant vector database expertise'
-  },
-  redis: {
-    path: '/Users/samuelatagana/Library/Mobile Documents/iCloud~md~obsidian/Documents/LegacyMind/Experts/Redis',
-    files: ['Redis_Expert_Guide.md', 'Redis_Data_Structures.md'],
-    description: 'Redis in-memory database expertise'
+  {
+    message: "Must provide either 'lookup' or 'query', but not both"
   }
+);
+
+/**
+ * Rate limit configuration
+ */
+const RATE_LIMITS = {
+  inject: { max: 10, window: 300 }, // 10 injections per 5 minutes
+  help: { max: 20, window: 60 }     // 20 help requests per minute
 };
 
 export class InjectTool {
-  constructor(logger, sessionManager) {
-    this.logger = logger;
+  constructor(sessionManager) {
     this.sessionManager = sessionManager;
-    this.redis = sessionManager?.redis || null;
+    this.logger = logger;
+    
+    // Note: In the future, this will be replaced with actual MCP client
+    // For now, we'll throw an error indicating the service dependency
+    this.unifiedKnowledgeClient = null;
+    
+    this.logger.info('InjectTool initialized (lightweight router mode)');
   }
 
+  /**
+   * Main execution method - acts as a router to UnifiedKnowledge
+   */
   async execute(args) {
-    const { type, source, validate = true } = args;
-
     try {
-      if (!this.redis) {
-        throw new Error('Redis connection not available');
+      // Validate input
+      const validatedArgs = this.validate(args);
+      const { action, type, lookup, query } = validatedArgs;
+
+      // Handle help action
+      if (action === 'help') {
+        return this.getHelp();
       }
 
-      this.logger.info(`Executing ui_inject: type=${type}, source=${source}`);
-
-      let content;
-      let metadata = {
-        type,
-        source,
-        timestamp: new Date().toISOString()
-      };
-
-      if (type === 'expert') {
-        content = await this.loadExpertModule(source);
-        metadata.expert = {
-          module: source,
-          description: EXPERT_MODULES[source]?.description
-        };
-      } else if (type === 'context') {
-        content = await this.loadContextFile(source);
-        metadata.context = {
-          path: source,
-          size: content.length
-        };
+      // Rate limiting
+      const currentInstanceId = this.sessionManager?.currentInstanceId || 'unknown';
+      const isRateLimited = await rateLimiter.check(currentInstanceId, 'inject', RATE_LIMITS.inject);
+      if (isRateLimited) {
+        throw new Error('Rate limit exceeded for inject operations');
       }
 
-      // Validate content if requested
-      if (validate) {
-        await this.validateContent(content, type);
-      }
-
-      // Get the active session
-      const activeSession = await this.sessionManager.getActiveSession();
-      if (!activeSession) {
-        throw new Error('No active session found. Please check in first.');
-      }
-
-      // Store injected content in Redis with session reference
-      const contextKey = `${activeSession.instanceId}:context:${Date.now()}`;
-      await this.redis.setex(
-        contextKey, 
-        86400, // 24 hour expiry
-        JSON.stringify({
-          sessionId: activeSession.id,
-          type: 'injected',
-          content,
-          metadata
-        })
-      );
-
-      // Update session activity
-      await this.sessionManager.updateActivity(activeSession.instanceId);
-
-      this.logger.info(`Successfully injected ${type} content: ${source}`);
+      // Route to appropriate UnifiedKnowledge service
+      const result = await this.routeToUnifiedKnowledge(type, lookup, query);
+      
+      // Store injected content in session context
+      await this.storeInjectedContext(result, type, lookup || query);
 
       return {
         success: true,
-        type,
-        source,
-        contentSize: content.length,
-        metadata,
-        message: `Successfully injected ${type} content from ${source}`
+        message: `Successfully injected ${type} knowledge: ${lookup || query}`,
+        injected: {
+          type,
+          identifier: lookup || query,
+          contentLength: result.content ? result.content.length : 0,
+          timestamp: new Date().toISOString()
+        }
       };
 
     } catch (error) {
-      this.logger.error(`Error in ui_inject:`, error);
+      this.logger.error('InjectTool execution failed', {
+        error: error.message,
+        args
+      });
       throw error;
     }
   }
 
-  async loadExpertModule(moduleName) {
-    const module = EXPERT_MODULES[moduleName.toLowerCase()];
-    if (!module) {
-      throw new Error(`Unknown expert module: ${moduleName}. Available modules: ${Object.keys(EXPERT_MODULES).join(', ')}`);
-    }
-
-    const contents = [];
-    for (const filename of module.files) {
-      const filePath = path.join(module.path, filename);
-      try {
-        const content = await fs.readFile(filePath, 'utf-8');
-        contents.push(`\n## ${filename}\n\n${content}`);
-      } catch (error) {
-        this.logger.warn(`Could not load expert file ${filePath}: ${error.message}`);
-      }
-    }
-
-    if (contents.length === 0) {
-      throw new Error(`No expert content found for module: ${moduleName}`);
-    }
-
-    return `# Expert Module: ${moduleName}\n${module.description}\n${contents.join('\n')}`;
-  }
-
-  async loadContextFile(source) {
-    // Check if source is a file path
-    if (source.startsWith('/') || source.startsWith('./')) {
-      return await this.loadLocalFile(source);
-    }
-    
-    // Check if source is a URL
-    if (source.startsWith('http://') || source.startsWith('https://')) {
-      return await this.loadFromURL(source);
-    }
-
-    throw new Error(`Invalid source: ${source}. Must be a file path or URL`);
-  }
-
-  async loadLocalFile(filePath) {
-    // Validate file extension
-    const ext = path.extname(filePath).toLowerCase();
-    if (!ALLOWED_EXTENSIONS.includes(ext)) {
-      throw new Error(`File type not allowed: ${ext}. Allowed types: ${ALLOWED_EXTENSIONS.join(', ')}`);
-    }
-
-    // Check file size
-    const stats = await fs.stat(filePath);
-    if (stats.size > MAX_CONTEXT_SIZE) {
-      throw new Error(`File too large: ${stats.size} bytes. Maximum allowed: ${MAX_CONTEXT_SIZE} bytes`);
-    }
-
-    // Read file content
-    const content = await fs.readFile(filePath, 'utf-8');
-    return content;
-  }
-
-  async loadFromURL(url) {
+  /**
+   * Input validation
+   */
+  validate(args) {
     try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const contentLength = response.headers.get('content-length');
-      if (contentLength && parseInt(contentLength) > MAX_CONTEXT_SIZE) {
-        throw new Error(`Content too large: ${contentLength} bytes. Maximum allowed: ${MAX_CONTEXT_SIZE} bytes`);
-      }
-
-      const content = await response.text();
-      if (content.length > MAX_CONTEXT_SIZE) {
-        throw new Error(`Content too large: ${content.length} bytes. Maximum allowed: ${MAX_CONTEXT_SIZE} bytes`);
-      }
-
-      return content;
+      return InjectInputSchema.parse(args);
     } catch (error) {
-      throw new Error(`Failed to fetch URL: ${error.message}`);
+      throw new Error(`Input validation failed: ${error.message}`);
     }
   }
 
-  async validateContent(content, type) {
-    // Basic validation
-    if (!content || typeof content !== 'string') {
-      throw new Error('Invalid content: must be a non-empty string');
-    }
-
-    if (content.length === 0) {
-      throw new Error('Content is empty');
-    }
-
-    if (content.length > MAX_CONTEXT_SIZE) {
-      throw new Error(`Content too large: ${content.length} bytes. Maximum allowed: ${MAX_CONTEXT_SIZE} bytes`);
-    }
-
-    // Type-specific validation
-    if (type === 'expert') {
-      // Ensure expert content has expected structure
-      if (!content.includes('# Expert Module:')) {
-        throw new Error('Invalid expert module content structure');
-      }
-    }
-
-    // Check for potentially harmful content
-    const suspiciousPatterns = [
-      /<script[\s\S]*?<\/script>/gi,
-      /javascript:/gi,
-      /on\w+\s*=/gi
-    ];
-
-    for (const pattern of suspiciousPatterns) {
-      if (pattern.test(content)) {
-        throw new Error('Content contains potentially unsafe patterns');
-      }
-    }
-
-    return true;
+  /**
+   * Route request to UnifiedKnowledge MCP
+   */
+  async routeToUnifiedKnowledge(type, lookup, query) {
+    // TODO: Replace with actual UnifiedKnowledge MCP client call
+    // This is where we'll implement the service call to:
+    // - UnifiedKnowledge:experts:get for expert lookups
+    // - UnifiedKnowledge:experts:search for expert queries  
+    // - UnifiedKnowledge:document:get for document lookups
+    // - UnifiedKnowledge:document:search for document queries
+    
+    throw new Error(
+      'UnifiedKnowledge MCP integration not yet implemented. ' +
+      'This tool requires connection to UnifiedKnowledge service for: ' +
+      `${type} ${lookup ? 'lookup' : 'search'}: ${lookup || query}`
+    );
   }
 
-  getSchema() {
-    return injectSchema.shape;
+  /**
+   * Parse lookup string into structured payload
+   */
+  parseLookup(lookup) {
+    if (!lookup) return null;
+
+    // Handle expert module format: "Docker:Networking" 
+    if (lookup.includes(':')) {
+      const [topic, module] = lookup.split(':', 2);
+      return {
+        type: 'expert',
+        topic: topic.trim(),
+        module: module.trim()
+      };
+    }
+
+    // Handle document ID or simple identifier
+    return {
+      type: 'document',
+      identifier: lookup.trim()
+    };
+  }
+
+  /**
+   * Format result from UnifiedKnowledge for injection
+   */
+  formatResult(result) {
+    if (!result || !result.content) {
+      return 'No content available';
+    }
+
+    // Add metadata header
+    const header = `# Injected Knowledge\n\n**Source**: ${result.source || 'Unknown'}\n**Type**: ${result.type || 'Unknown'}\n**Retrieved**: ${new Date().toISOString()}\n\n---\n\n`;
+    
+    return header + result.content;
+  }
+
+  /**
+   * Store injected content in session context
+   */
+  async storeInjectedContext(result, type, identifier) {
+    if (!this.sessionManager) {
+      this.logger.warn('No session manager available - context not stored');
+      return;
+    }
+
+    const contextData = {
+      id: uuidv4(),
+      type: 'injected_knowledge',
+      source: `${type}:${identifier}`,
+      content: this.formatResult(result),
+      injectedAt: new Date().toISOString(),
+      sessionId: this.sessionManager.currentSessionId
+    };
+
+    // Store in session context (this will use the session manager's storage)
+    await this.sessionManager.addContextData(contextData);
+    
+    this.logger.info('Injected content stored in session context', {
+      type,
+      identifier,
+      contentLength: contextData.content.length
+    });
+  }
+
+  /**
+   * Provide help information
+   */
+  getHelp() {
+    return {
+      tool: 'ui_inject',
+      description: 'Lightweight knowledge injection router',
+      architecture: 'Service-oriented - delegates to UnifiedKnowledge MCP',
+      
+      usage: {
+        expert_lookup: {
+          description: 'Inject expert knowledge by direct lookup',
+          example: {
+            type: 'expert',
+            lookup: 'Docker:Networking'
+          }
+        },
+        expert_search: {
+          description: 'Find expert knowledge by semantic search',
+          example: {
+            type: 'expert', 
+            query: 'container networking best practices'
+          }
+        },
+        document_lookup: {
+          description: 'Inject document by ID or identifier',
+          example: {
+            type: 'document',
+            lookup: 'DOC-12345'
+          }
+        },
+        document_search: {
+          description: 'Find documents by semantic search',
+          example: {
+            type: 'document',
+            query: 'microservices architecture patterns'
+          }
+        }
+      },
+
+      changes: {
+        removed: [
+          'Federation context loading (use direct cross-instance calls)',
+          'Filesystem access and file reading',
+          'Direct Redis/database operations',
+          'Complex monolithic logic'
+        ],
+        added: [
+          'Service-oriented architecture',
+          'Clean separation of concerns', 
+          'UnifiedKnowledge MCP integration',
+          'Lightweight routing design'
+        ]
+      },
+
+      next_steps: [
+        'Implement UnifiedKnowledge MCP client integration',
+        'Add retry logic and error handling',
+        'Create comprehensive test suite',
+        'Add metrics and monitoring'
+      ]
+    };
   }
 }
-
-export const createInjectTool = (logger, sessionManager) => {
-  return new InjectTool(logger, sessionManager);
-};

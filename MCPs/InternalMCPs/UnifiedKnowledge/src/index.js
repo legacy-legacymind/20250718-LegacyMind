@@ -9,6 +9,9 @@ import { QdrantManager } from './managers/qdrant-manager.js';
 import { EmbeddingService } from './services/embedding-service.js';
 import { ticketTools } from './tools/ticket-tools.js';
 import { systemDocTools } from './tools/system-doc-tools.js';
+import { handleDocumentTool } from './tools/document-tools.js';
+import { DocumentManager } from './managers/document-manager.js';
+import { runMigrations } from './utils/run-migrations.js';
 
 class UnifiedKnowledgeServer {
   constructor() {
@@ -28,6 +31,7 @@ class UnifiedKnowledgeServer {
     this.postgres = null;
     this.qdrant = null;
     this.embedding = null;
+    this.documentManager = null;
     
     this.setupHandlers();
   }
@@ -43,6 +47,11 @@ class UnifiedKnowledgeServer {
       console.error('[UK] Initializing PostgreSQL connection...');
       const dbUrl = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/postgres';
       this.postgres = new PostgreSQLManager({ connectionString: dbUrl });
+      await this.postgres.connect();
+      
+      // Run database migrations
+      console.error('[UK] Running database migrations...');
+      await runMigrations(this.postgres);
       
       // Initialize Qdrant
       console.error('[UK] Initializing Qdrant connection...');
@@ -52,6 +61,11 @@ class UnifiedKnowledgeServer {
       // Initialize Embedding Service
       console.error('[UK] Initializing embedding service...');
       this.embedding = new EmbeddingService();
+      
+      // Initialize Document Manager
+      console.error('[UK] Initializing document manager...');
+      this.documentManager = new DocumentManager(this.redis, this.postgres);
+      console.error('[UK] Document manager initialized with Active-Archive pattern');
       
       console.error('[UK] All services initialized successfully');
       
@@ -180,7 +194,58 @@ class UnifiedKnowledgeServer {
       return {
         tools: [
           ...ticketTools.getToolDefinitions(),
-          ...systemDocTools.getToolDefinitions()
+          ...systemDocTools.getToolDefinitions(),
+          {
+            name: "document",
+            description: "Manage versioned documents with Active-Archive storage pattern",
+            inputSchema: {
+              type: "object",
+              properties: {
+                action: {
+                  type: "string",
+                  enum: ["create", "update", "get", "history", "list"],
+                  description: "The action to perform"
+                },
+                title: {
+                  type: "string",
+                  description: "Document title (for create action)"
+                },
+                content: {
+                  type: "string", 
+                  description: "Document content (for create/update actions)"
+                },
+                doc_id: {
+                  type: "string",
+                  description: "Document UUID (for update/get/history actions)"
+                },
+                revision_id: {
+                  type: "string",
+                  description: "Specific revision UUID (optional for get action)"
+                },
+                author: {
+                  type: "string",
+                  description: "Author name (optional)"
+                },
+                notes: {
+                  type: "string", 
+                  description: "Revision notes (optional for update action)"
+                },
+                metadata: {
+                  type: "object",
+                  description: "Document metadata (optional for create action)"
+                },
+                limit: {
+                  type: "number",
+                  description: "Number of results to return (for list action, max 100)"
+                },
+                offset: {
+                  type: "number",
+                  description: "Number of results to skip (for list action)"
+                }
+              },
+              required: ["action"]
+            }
+          }
         ]
       };
     });
@@ -188,6 +253,8 @@ class UnifiedKnowledgeServer {
     // Tool execution
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
+      
+      console.error(`[UK] Tool call received: ${name}`, JSON.stringify(args, null, 2));
       
       try {
         // Check connection health before executing
@@ -204,8 +271,9 @@ class UnifiedKnowledgeServer {
         }
 
         // Route to appropriate tool handler
+        let result;
         if (name === 'uk_ticket') {
-          return await ticketTools.handleTool(
+          result = await ticketTools.handleTool(
             name, 
             args, 
             {
@@ -216,7 +284,7 @@ class UnifiedKnowledgeServer {
             }
           );
         } else if (name === 'uk_system_doc') {
-          return await systemDocTools.handleTool(
+          result = await systemDocTools.handleTool(
             name, 
             args, 
             {
@@ -226,11 +294,21 @@ class UnifiedKnowledgeServer {
               embedding: this.embedding
             }
           );
+        } else if (name === 'document') {
+          result = await handleDocumentTool(args, {
+            documentManager: this.documentManager
+          });
         } else {
           throw new Error(`Unknown tool: ${name}`);
         }
+        
+        console.error(`[UK] Tool call ${name} completed successfully`);
+        console.error(`[UK] Result:`, JSON.stringify(result, null, 2));
+        
+        return result;
       } catch (error) {
         console.error(`[UK] Error executing tool ${name}:`, error);
+        console.error(`[UK] Error stack:`, error.stack);
         return {
           content: [
             {

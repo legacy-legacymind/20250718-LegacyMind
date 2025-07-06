@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -5,6 +7,8 @@ import { UnifiedIntelligence } from './core/unified-intelligence.js';
 import { RememberTool } from './tools/remember-tool.js';
 import { InjectTool } from './tools/inject-tool.js';
 import { logger } from './utils/logger.js';
+import { healthMonitor } from './shared/health-monitor.js';
+import { cleanupService } from './shared/cleanup-service.js';
 
 class UnifiedIntelligenceServer {
   constructor() {
@@ -15,12 +19,11 @@ class UnifiedIntelligenceServer {
 Actions:
 - capture: Process thoughts and save to Redis
 - status: Get current session status  
-- check_in: Initialize federation for instance
-- remember_identity: Store/update instance identity information
-- remember_context: Store/update current working context
-- remember_curiosity: Store/update what the instance is curious about
+- check_in: Initialize federation for instance (identity only)
 - monitor: Control auto-capture monitoring (start/stop/status/thresholds)
 - help: Get detailed usage information
+
+Note: Use ui_remember for persistent memory management and ui_inject for context loading
 
 Features:
 - Automatic mode detection (convo, design, debug, task, learn, decision, test)
@@ -34,16 +37,12 @@ Philosophy: "Keep it simple" - Just capture thoughts to Redis, nothing else.`,
         properties: {
           action: {
             type: 'string',
-            enum: ['capture', 'status', 'check_in', 'remember_identity', 'remember_context', 'remember_curiosity', 'monitor', 'help'],
+            enum: ['capture', 'status', 'check_in', 'monitor', 'help'],
             description: 'Action to perform (defaults to capture)',
           },
           thought: {
             type: 'string',
             description: 'The thought content (required for capture)',
-          },
-          content: {
-            type: 'string',
-            description: 'Content for remember_* actions',
           },
           identity: {
             type: 'object',
@@ -134,11 +133,16 @@ Philosophy: "Remember what matters" - Structured, searchable persistent memory i
 
     this.uiInjectTool = {
       name: 'ui_inject',
-      description: `Context and expert knowledge injection for the Federation. Load specialized knowledge modules or custom context.
+      description: `Enhanced context injection with federation support. Load specialized knowledge, custom context, or federation instance data.
 
 Actions:
+- action: 'inject' - Perform injection (default)
+- action: 'help' - Get detailed usage information
+
+Injection Types:
 - type: 'context' - Load custom files or URLs
 - type: 'expert' - Load expert knowledge modules
+- type: 'federation' - Load context from another instance
 
 Expert Modules Available:
 - docker: Docker containerization expertise
@@ -147,24 +151,51 @@ Expert Modules Available:
 - qdrant: Qdrant vector database expertise  
 - redis: Redis in-memory database expertise
 
-Features:
-- Automatic content validation
-- Size limits (50KB max)
-- Safe file type restrictions
-- Session-scoped injection
+Federation Features:
+- Cross-instance context loading
+- Parallel data retrieval
+- Graceful partial loading
+- Service-oriented architecture
 
-Philosophy: "Knowledge on demand" - Inject relevant expertise exactly when needed.`,
+Philosophy: "Knowledge on demand" - Inject relevant expertise exactly when needed, from any source.`,
       inputSchema: {
         type: 'object',
         properties: {
+          action: {
+            type: 'string',
+            enum: ['inject', 'help'],
+            description: 'Action to perform (defaults to inject)'
+          },
           type: {
             type: 'string',
-            enum: ['context', 'expert'],
-            description: 'Type of injection: context for general knowledge, expert for specialized modules'
+            enum: ['context', 'expert', 'federation'],
+            description: 'Type of injection: context for general knowledge, expert for specialized modules, federation for instance context'
           },
           source: {
-            type: 'string',
-            description: 'For context: file path or URL. For expert: module name (e.g., "docker", "mcp", "postgresql")'
+            oneOf: [
+              {
+                type: 'string',
+                description: 'For context: file path or URL. For expert: module name'
+              },
+              {
+                type: 'object',
+                properties: {
+                  instance: {
+                    type: 'string',
+                    description: 'Target instance ID (e.g., CCI, CCD, CCB)'
+                  },
+                  mode: {
+                    type: 'string',
+                    enum: ['default', 'custom'],
+                    description: 'Mode for federation injection',
+                    default: 'default'
+                  }
+                },
+                required: ['instance'],
+                description: 'For federation: instance configuration'
+              }
+            ],
+            description: 'Source of content to inject'
           },
           validate: {
             type: 'boolean',
@@ -195,6 +226,8 @@ Philosophy: "Knowledge on demand" - Inject relevant expertise exactly when neede
     this.intelligence = null;
     this.rememberTool = null;
     this.injectTool = null;
+    this.healthCheckInterval = null;
+    this.cleanupInterval = null;
     this.setupHandlers();
   }
 
@@ -218,8 +251,10 @@ Philosophy: "Knowledge on demand" - Inject relevant expertise exactly when neede
     
     this.intelligence = new UnifiedIntelligence(uiConfig);
     
-    // Wait for intelligence to be initialized before creating RememberTool
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Wait for Redis to be fully initialized
+    if (this.intelligence.initializationPromise) {
+      await this.intelligence.initializationPromise;
+    }
     
     // Initialize RememberTool with Redis and SessionManager
     if (this.intelligence.redis && this.intelligence.sessions) {
@@ -233,9 +268,9 @@ Philosophy: "Knowledge on demand" - Inject relevant expertise exactly when neede
       logger.warn('RememberTool not initialized - Redis or SessionManager not available');
     }
     
-    // Initialize InjectTool with logger and SessionManager
+    // Initialize InjectTool with logger, SessionManager, and RememberTool
     if (this.intelligence.sessions) {
-      this.injectTool = new InjectTool(logger, this.intelligence.sessions);
+      this.injectTool = new InjectTool(logger, this.intelligence.sessions, this.rememberTool);
       logger.info('InjectTool initialized successfully');
     } else {
       logger.warn('InjectTool not initialized - SessionManager not available');
@@ -305,12 +340,113 @@ Philosophy: "Knowledge on demand" - Inject relevant expertise exactly when neede
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     logger.info('UnifiedIntelligence MCP server started (Redis-only mode)');
+    
+    // Start background services
+    this.startBackgroundServices();
+  }
+  
+  
+  startBackgroundServices() {
+    // Start health monitoring every 30 seconds
+    this.healthCheckInterval = setInterval(async () => {
+      try {
+        const health = await healthMonitor.check();
+        
+        // Log warnings when data growth exceeds thresholds
+        if (health.dataGrowth?.warning) {
+          logger.warn('Data growth threshold exceeded', {
+            totalKeys: health.dataGrowth.totalKeys,
+            threshold: health.dataGrowth.threshold
+          });
+        }
+        
+        if (health.memory?.warning) {
+          logger.warn('Memory usage threshold exceeded', {
+            heapUsed: health.memory.heapUsed,
+            threshold: healthMonitor.warningThresholds.memoryUsage
+          });
+        }
+        
+        if (health.uptime?.warning) {
+          logger.warn('Uptime threshold exceeded', {
+            hours: health.uptime.hours,
+            threshold: healthMonitor.warningThresholds.uptimeHours / 24 + ' days'
+          });
+        }
+        
+        logger.debug('Health check completed', health);
+      } catch (error) {
+        logger.error('Health check failed', { error: error.message });
+      }
+    }, 30000); // 30 seconds
+    
+    // Start cleanup every hour
+    this.cleanupInterval = setInterval(async () => {
+      try {
+        logger.info('Starting scheduled cleanup');
+        const result = await cleanupService.runCleanup();
+        logger.info('Scheduled cleanup completed', result);
+      } catch (error) {
+        logger.error('Scheduled cleanup failed', { error: error.message });
+      }
+    }, 3600000); // 1 hour
+    
+    logger.info('Background services started', {
+      healthCheck: 'every 30 seconds',
+      cleanup: 'every hour'
+    });
+  }
+  
+  async shutdown() {
+    logger.info('Shutting down background services');
+    
+    // Stop intervals
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
+    
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+    
+    // Wait for any running cleanup to finish
+    if (cleanupService.isRunning) {
+      logger.info('Waiting for cleanup to finish');
+      let attempts = 0;
+      while (cleanupService.isRunning && attempts < 30) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        attempts++;
+      }
+    }
+    
+    // Shutdown Redis manager
+    const { redisManager } = await import('./shared/redis-manager.js');
+    await redisManager.shutdown();
+    
+    logger.info('Background services stopped');
   }
 }
 
 const server = new UnifiedIntelligenceServer();
-server.initialize().then(() => {
-  server.run().catch((error) => {
+
+// Graceful shutdown handlers
+process.on('SIGINT', async () => {
+  logger.info('Received SIGINT, shutting down gracefully');
+  await server.shutdown();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  logger.info('Received SIGTERM, shutting down gracefully');
+  await server.shutdown();
+  process.exit(0);
+});
+
+// Initialize and run in stdio mode (spawn-per-call)
+server.initialize().then(async () => {
+  await server.run().catch((error) => {
     logger.error('Fatal error during runtime:', error);
     process.exit(1);
   });

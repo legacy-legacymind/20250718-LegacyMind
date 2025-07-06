@@ -17,6 +17,7 @@ export class RedisManager {
       }
 
       const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+      console.log(`[Redis] Connecting to: ${redisUrl.replace(/:([^@]+)@/, ':****@')}`); // Log URL with masked password
       
       this.client = createClient({
         url: redisUrl,
@@ -110,6 +111,8 @@ export class RedisManager {
     await this.ensureConnected();
     
     try {
+      console.log(`[Redis] Starting storeTicket for ticket ID: ${ticketId}`);
+      
       const key = `ticket:${ticketId}`;
       const now = new Date().toISOString();
       const timestamp = Date.now();
@@ -146,14 +149,27 @@ export class RedisManager {
         metadata: JSON.stringify(ticketData.metadata || {})
       };
       
+      console.log(`[Redis] Prepared ticket hash with ${Object.keys(ticketHash).length} fields`);
+      console.log(`[Redis] Key: ${key}`);
+      console.log(`[Redis] Sample fields - status: ${ticketHash.status}, priority: ${ticketHash.priority}`);
+      
       // Get old ticket data to clean up old indexes
       const oldTicket = await this.getTicket(ticketId);
+      console.log(`[Redis] Old ticket exists: ${!!oldTicket}`);
       
       // Use MULTI for atomic transaction
+      console.log('[Redis] Creating MULTI transaction');
       const multi = this.client.multi();
       
       // Store ticket hash
-      multi.hSet(key, ticketHash);
+      console.log('[Redis] Adding hSet command to transaction');
+      
+      // The node-redis client expects field-value pairs as arguments
+      // We'll add each field individually to ensure compatibility
+      for (const [field, value] of Object.entries(ticketHash)) {
+        multi.hSet(key, field, value);
+      }
+      console.log(`[Redis] Added ${Object.keys(ticketHash).length} hSet commands to transaction`);
       
       // Clean up old indexes if updating
       if (oldTicket) {
@@ -183,11 +199,15 @@ export class RedisManager {
       
       // Add to new indexes
       if (ticketData.status) {
-        multi.sAdd(`index:status:${ticketData.status.toLowerCase()}`, ticketId);
+        const statusKey = `index:status:${ticketData.status.toLowerCase()}`;
+        console.log(`[Redis] Adding to status index: ${statusKey}`);
+        multi.sAdd(statusKey, ticketId);
       }
       
       if (ticketData.assignee) {
-        multi.sAdd(`index:assignee:${ticketData.assignee.toLowerCase()}`, ticketId);
+        const assigneeKey = `index:assignee:${ticketData.assignee.toLowerCase()}`;
+        console.log(`[Redis] Adding to assignee index: ${assigneeKey}`);
+        multi.sAdd(assigneeKey, ticketId);
       }
       
       if (ticketData.reporter) {
@@ -223,13 +243,32 @@ export class RedisManager {
       }
       
       // Execute transaction
-      const results = await multi.exec();
+      console.log('[Redis] Preparing to execute transaction...');
+      console.log(`[Redis] Transaction queue length: ${multi.queue ? multi.queue.length : 'unknown'}`);
+      
+      let results;
+      try {
+        results = await multi.exec();
+        console.log(`[Redis] Transaction executed, results:`, results);
+        console.log(`[Redis] Number of results: ${results ? results.length : 'null'}`);
+      } catch (execError) {
+        console.error('[Redis] Transaction execution error:', execError);
+        console.error('[Redis] Error stack:', execError.stack);
+        throw new Error(`Transaction execution failed: ${execError.message}`);
+      }
+      
+      // Check if results is null (transaction was aborted)
+      if (results === null) {
+        throw new Error('Transaction was aborted (possibly due to watched keys changing)');
+      }
       
       // Check if all operations succeeded
-      const allSucceeded = results.every(result => result[0] === null);
-      if (!allSucceeded) {
-        const errors = results.filter(r => r[0] !== null).map(r => r[0]);
-        throw new Error(`Transaction partially failed: ${errors.join(', ')}`);
+      // In node-redis v4, exec() returns an array of results directly (not [error, result] tuples)
+      console.log(`[Redis] Checking ${results.length} operation results...`);
+      
+      // Log a few sample results for debugging
+      if (results.length > 0) {
+        console.log('[Redis] Sample operation results:', results.slice(0, 3));
       }
       
       console.log(`[Redis] Ticket ${ticketId} stored successfully`);
@@ -338,19 +377,20 @@ export class RedisManager {
         return [];
       }
       
-      // Batch fetch tickets using pipeline
-      const pipeline = this.client.pipeline();
+      // Batch fetch tickets using multi
+      const multi = this.client.multi();
       for (const ticketId of ticketIds) {
-        pipeline.hGetAll(`ticket:${ticketId}`);
+        multi.hGetAll(`ticket:${ticketId}`);
       }
       
-      const results = await pipeline.exec();
+      const results = await multi.exec();
       const tickets = [];
       
       // Process results
+      // In node-redis v4, multi.exec() returns an array of results directly
       for (let i = 0; i < results.length; i++) {
-        const [error, data] = results[i];
-        if (!error && data && Object.keys(data).length > 0) {
+        const data = results[i];
+        if (data && Object.keys(data).length > 0) {
           tickets.push({
             ticket_id: data.ticket_id,
             title: data.title,
@@ -473,7 +513,7 @@ export class RedisManager {
     }
   }
 
-  // Get all active tickets (optimized with pipeline)
+  // Get all active tickets (optimized with multi)
   async getAllActiveTickets() {
     await this.ensureConnected();
     
@@ -491,18 +531,18 @@ export class RedisManager {
         return [];
       }
       
-      // Batch fetch using pipeline
-      const pipeline = this.client.pipeline();
+      // Batch fetch using multi
+      const multi = this.client.multi();
       for (const ticketId of activeIds) {
-        pipeline.hGetAll(`ticket:${ticketId}`);
+        multi.hGetAll(`ticket:${ticketId}`);
       }
       
-      const results = await pipeline.exec();
+      const results = await multi.exec();
       const tickets = [];
       
       for (let i = 0; i < results.length; i++) {
-        const [error, data] = results[i];
-        if (!error && data && Object.keys(data).length > 0) {
+        const data = results[i];
+        if (data && Object.keys(data).length > 0) {
           tickets.push({
             ticket_id: data.ticket_id,
             title: data.title,
@@ -535,7 +575,7 @@ export class RedisManager {
     }
   }
 
-  // Get all closed tickets (optimized with pipeline)
+  // Get all closed tickets (optimized with multi)
   async getAllClosedTickets() {
     await this.ensureConnected();
     
@@ -552,18 +592,18 @@ export class RedisManager {
         return [];
       }
       
-      // Batch fetch using pipeline
-      const pipeline = this.client.pipeline();
+      // Batch fetch using multi
+      const multi = this.client.multi();
       for (const ticketId of allClosedIds) {
-        pipeline.hGetAll(`ticket:${ticketId}`);
+        multi.hGetAll(`ticket:${ticketId}`);
       }
       
-      const results = await pipeline.exec();
+      const results = await multi.exec();
       const tickets = [];
       
       for (let i = 0; i < results.length; i++) {
-        const [error, data] = results[i];
-        if (!error && data && Object.keys(data).length > 0) {
+        const data = results[i];
+        if (data && Object.keys(data).length > 0) {
           tickets.push({
             ticket_id: data.ticket_id,
             title: data.title,
@@ -625,18 +665,18 @@ export class RedisManager {
         return [];
       }
       
-      // Batch fetch using pipeline
-      const pipeline = this.client.pipeline();
+      // Batch fetch using multi
+      const multi = this.client.multi();
       for (const ticketId of ticketIds) {
-        pipeline.hGetAll(`ticket:${ticketId}`);
+        multi.hGetAll(`ticket:${ticketId}`);
       }
       
-      const results = await pipeline.exec();
+      const results = await multi.exec();
       const tickets = [];
       
       for (let i = 0; i < results.length; i++) {
-        const [error, data] = results[i];
-        if (!error && data && Object.keys(data).length > 0) {
+        const data = results[i];
+        if (data && Object.keys(data).length > 0) {
           tickets.push({
             ticket_id: data.ticket_id,
             title: data.title,
@@ -767,18 +807,18 @@ export class RedisManager {
         return [];
       }
       
-      // Batch fetch using pipeline
-      const pipeline = this.client.pipeline();
+      // Batch fetch using multi
+      const multi = this.client.multi();
       for (const ticketId of ticketIds) {
-        pipeline.hGetAll(`ticket:${ticketId}`);
+        multi.hGetAll(`ticket:${ticketId}`);
       }
       
-      const results = await pipeline.exec();
+      const results = await multi.exec();
       const tickets = [];
       
       for (let i = 0; i < results.length; i++) {
-        const [error, data] = results[i];
-        if (!error && data && Object.keys(data).length > 0) {
+        const data = results[i];
+        if (data && Object.keys(data).length > 0) {
           tickets.push({
             id: data.ticket_id,  // Map ticket_id to id for consistency
             ticket_id: data.ticket_id,

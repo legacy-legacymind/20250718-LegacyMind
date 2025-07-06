@@ -24,12 +24,12 @@ ENV CONTAINER_NAME="unified_intelligence"
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001
 
-# Change ownership of the app directory
-RUN chown -R nodejs:nodejs /app
+# Create necessary directories and set permissions
+RUN mkdir -p /tmp && \
+    chown -R nodejs:nodejs /app /tmp
 
 # Switch to the non-root user
 USER nodejs
 
-# Command to run the application
+# Run the MCP server directly (spawn-per-call model)
 CMD ["node", "src/index.js"]
-

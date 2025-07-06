@@ -1,4 +1,5 @@
 import { QdrantClient } from '@qdrant/js-client-rest';
+import crypto from 'crypto';
 
 export class QdrantManager {
   constructor() {
@@ -45,10 +46,12 @@ export class QdrantManager {
       
       if (!existingCollections.includes(this.collections.tickets)) {
         await this.createCollection(this.collections.tickets);
+        await this.createPayloadIndex(this.collections.tickets, 'ticket_id');
       }
       
       if (!existingCollections.includes(this.collections.docs)) {
         await this.createCollection(this.collections.docs);
+        await this.createPayloadIndex(this.collections.docs, 'doc_id');
       }
       
       console.error('[Qdrant] Collections verified');
@@ -78,13 +81,32 @@ export class QdrantManager {
     }
   }
 
+  async createPayloadIndex(collectionName, fieldName) {
+    try {
+      await this.client.createPayloadIndex(collectionName, {
+        field_name: fieldName,
+        field_schema: 'keyword'
+      });
+      console.error(`[Qdrant] Created payload index on ${fieldName} for collection: ${collectionName}`);
+    } catch (error) {
+      // Index might already exist, which is fine
+      if (error.message && error.message.includes('already exists')) {
+        console.error(`[Qdrant] Payload index on ${fieldName} already exists for collection: ${collectionName}`);
+      } else {
+        console.error(`[Qdrant] Failed to create payload index on ${fieldName} for collection ${collectionName}:`, error);
+        // Don't throw - index creation failure shouldn't break initialization
+      }
+    }
+  }
+
   async upsertTicketEmbedding(ticketId, embedding, ticketData) {
     try {
+      // Generate a UUID for the point ID
       const point = {
-        id: ticketId, // Use ticket_id string directly (UUID format)
+        id: crypto.randomUUID(),
         vector: embedding,
         payload: {
-          ticket_id: ticketData.ticket_id,
+          ticket_id: ticketId, // Store ticket_id in payload instead
           title: ticketData.title,
           type: ticketData.type,
           category: ticketData.category,
@@ -100,6 +122,9 @@ export class QdrantManager {
           description: ticketData.description || ''
         }
       };
+
+      // First, delete any existing embedding for this ticket_id
+      await this.deleteTicketEmbedding(ticketId);
 
       await this.client.upsert(this.collections.tickets, {
         wait: true,
@@ -131,6 +156,7 @@ export class QdrantManager {
       
       return results.map(result => ({
         score: result.score,
+        ticket_id: result.payload.ticket_id, // Explicitly include ticket_id from payload
         ...result.payload
       }));
     } catch (error) {
@@ -141,15 +167,62 @@ export class QdrantManager {
 
   async deleteTicketEmbedding(ticketId) {
     try {
+      // Delete by payload filter since we're no longer using ticket_id as point ID
+      const filter = {
+        must: [
+          {
+            key: 'ticket_id',
+            match: {
+              value: ticketId
+            }
+          }
+        ]
+      };
+
       await this.client.delete(this.collections.tickets, {
         wait: true,
-        points: [ticketId] // Use ticket_id string directly
+        filter: filter
       });
       
       console.error(`[Qdrant] Deleted embedding for ticket ${ticketId}`);
       return true;
     } catch (error) {
-      console.error('[Qdrant] Failed to delete ticket embedding:', error);
+      // Ignore errors - ticket might not have an embedding yet
+      console.error('[Qdrant] Failed to delete ticket embedding (may not exist):', error.message);
+      return false;
+    }
+  }
+
+  async getTicketEmbeddingByTicketId(ticketId) {
+    try {
+      const filter = {
+        must: [
+          {
+            key: 'ticket_id',
+            match: {
+              value: ticketId
+            }
+          }
+        ]
+      };
+
+      const result = await this.client.scroll(this.collections.tickets, {
+        filter: filter,
+        limit: 1,
+        with_payload: true,
+        with_vector: true
+      });
+
+      if (result.points && result.points.length > 0) {
+        return {
+          vector: result.points[0].vector,
+          payload: result.points[0].payload
+        };
+      }
+
+      return null;
+    } catch (error) {
+      console.error('[Qdrant] Failed to get ticket embedding by ID:', error);
       throw error;
     }
   }
@@ -157,11 +230,12 @@ export class QdrantManager {
   // System documentation operations (Phase 2)
   async upsertDocEmbedding(docId, embedding, docData) {
     try {
+      // Generate a UUID for the point ID
       const point = {
-        id: docId, // Use doc_id string directly (UUID format)
+        id: crypto.randomUUID(),
         vector: embedding,
         payload: {
-          doc_id: docData.doc_id,
+          doc_id: docId, // Store doc_id in payload instead
           title: docData.title,
           category: docData.category,
           system: docData.system,
@@ -174,6 +248,9 @@ export class QdrantManager {
         }
       };
 
+      // First, delete any existing embedding for this doc_id
+      await this.deleteDocEmbedding(docId);
+
       await this.client.upsert(this.collections.docs, {
         wait: true,
         points: [point]
@@ -184,6 +261,34 @@ export class QdrantManager {
     } catch (error) {
       console.error('[Qdrant] Failed to upsert doc embedding:', error);
       throw error;
+    }
+  }
+
+  async deleteDocEmbedding(docId) {
+    try {
+      // Delete by payload filter since we're no longer using doc_id as point ID
+      const filter = {
+        must: [
+          {
+            key: 'doc_id',
+            match: {
+              value: docId
+            }
+          }
+        ]
+      };
+
+      await this.client.delete(this.collections.docs, {
+        wait: true,
+        filter: filter
+      });
+      
+      console.error(`[Qdrant] Deleted embedding for doc ${docId}`);
+      return true;
+    } catch (error) {
+      // Ignore errors - doc might not have an embedding yet
+      console.error('[Qdrant] Failed to delete doc embedding (may not exist):', error.message);
+      return false;
     }
   }
 
@@ -204,6 +309,7 @@ export class QdrantManager {
       
       return results.map(result => ({
         score: result.score,
+        doc_id: result.payload.doc_id, // Explicitly include doc_id from payload
         ...result.payload
       }));
     } catch (error) {
