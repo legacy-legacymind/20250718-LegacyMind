@@ -1,35 +1,16 @@
-# Dependencies
-node_modules/
+node_modules
 npm-debug.log
-yarn-error.log
-
-# Environment files
-.env
 .env.local
-.env.*.local
-
-# Test files
-test/
-tests/
-*.test.js
-*.spec.js
-coverage/
-.nyc_output
-
-# Development files
-.git/
-.gitignore
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Build artifacts
-dist/
-build/
+.env.development.local
+.env.test.local
+.env.production.local
 *.log
+.DS_Store
+.git
+.gitignore
+README.md
+test-mcp.js
+WORKLOG_*.md
+*.test.js
+coverage/
+.nyc_output/

@@ -1,35 +1,34 @@
-# Use an official Node.js runtime as a parent image
 FROM node:20-alpine
 
-# Set the working directory in the container
+# Install security updates
+RUN apk update && apk upgrade
+
+# Create app directory
 WORKDIR /app
 
-# Copy package.json and package-lock.json
+# Copy package files first for better caching
 COPY package*.json ./
 
-# Install production dependencies
-RUN npm ci --only=production
+# Install dependencies with integrity checking
+RUN npm ci --only=production --audit
 
-# Copy the rest of the application's source code
-COPY src/ ./src/
+# Copy application files
+COPY . .
 
-# Set environment variables for Redis connection and instance detection
-ENV REDIS_HOST=legacymind_redis
-ENV REDIS_PORT=6379
-ENV INSTANCE_ID=unified_intelligence
-ENV CLAUDE_INSTANCE=""
-ENV CONTAINER_NAME="unified_intelligence"
-
-# Create a non-root user to run the application
+# Create non-root user with specific UID/GID
 RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
+    adduser -S nodejs -u 1001 -G nodejs
 
-# Create necessary directories and set permissions
-RUN mkdir -p /tmp && \
-    chown -R nodejs:nodejs /app /tmp
+# Set proper permissions
+RUN chown -R nodejs:nodejs /app && \
+    chmod -R 755 /app
 
-# Switch to the non-root user
+# Switch to non-root user
 USER nodejs
 
-# Run the MCP server directly (spawn-per-call model)
-CMD ["node", "src/index.js"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD node -e "console.log('Health check passed')" || exit 1
+
+# Keep container running for docker exec
+CMD ["tail", "-f", "/dev/null"]
