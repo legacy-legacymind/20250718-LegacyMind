@@ -32,7 +32,7 @@ export const ui_bot = {
       
       // Get current context
       const redis = redisManager.getClient();
-      const contextKey = `context:${instanceId}`;
+      const contextKey = `${instanceId}:context`;
       const context = await redis.sendCommand(['JSON.GET', contextKey, '$']);
       const currentContext = context ? JSON.parse(context)[0] : {};
       
@@ -55,7 +55,7 @@ export const ui_bot = {
           };
           
         case 'capture_thought':
-          // Use the pipeline to capture and analyze
+          // Placeholder - ui_bot will be enhanced in next phase
           const result = await pipeline.processThought(instanceId, analysis.content, {
             conversationId,
             source: 'ui_bot'

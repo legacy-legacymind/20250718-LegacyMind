@@ -1,13 +1,14 @@
 import { v4 as uuidv4 } from 'uuid';
 
 export class SessionManager {
-  constructor(redisClient) {
+  constructor(redisClient, instanceId) {
     this.redis = redisClient;
+    this.instanceId = instanceId;
   }
 
   async createSession(instanceId, metadata = {}) {
     const sessionId = uuidv4();
-    const sessionKey = `session:${sessionId}`;
+    const sessionKey = `${instanceId}:session:${sessionId}`;
     const now = Date.now();
     
     const sessionData = {
@@ -31,24 +32,24 @@ export class SessionManager {
     ]);
     
     // Initialize time series for session metrics
-    await this.initializeMetrics(sessionId);
+    await this.initializeMetrics(instanceId, sessionId);
     
     // Track active session
-    await this.redis.set(`active_session:${instanceId}`, sessionId);
+    await this.redis.set(`${instanceId}:active_session`, sessionId);
     await this.redis.set('ui:last_instance', instanceId);
     
     // Initialize bloom filter for this session
-    await this.redis.bf.reserve(`session:bloom:${sessionId}`, 0.01, 10000);
+    await this.redis.bf.reserve(`${instanceId}:session:bloom:${sessionId}`, 0.01, 10000);
     
     return sessionData;
   }
 
-  async initializeMetrics(sessionId) {
+  async initializeMetrics(instanceId, sessionId) {
     const metrics = [
-      { key: `metrics:thoughts:${sessionId}`, label: 'thoughts_count' },
-      { key: `metrics:significance:${sessionId}`, label: 'avg_significance' },
-      { key: `metrics:confidence:${sessionId}`, label: 'avg_confidence' },
-      { key: `metrics:processing:${sessionId}`, label: 'processing_time_ms' }
+      { key: `${instanceId}:metrics:thoughts:${sessionId}`, label: 'thoughts_count' },
+      { key: `${instanceId}:metrics:significance:${sessionId}`, label: 'avg_significance' },
+      { key: `${instanceId}:metrics:confidence:${sessionId}`, label: 'avg_confidence' },
+      { key: `${instanceId}:metrics:processing:${sessionId}`, label: 'processing_time_ms' }
     ];
     
     for (const metric of metrics) {
@@ -69,7 +70,7 @@ export class SessionManager {
   }
 
   async recordMetric(sessionId, metricType, value) {
-    const metricKey = `metrics:${metricType}:${sessionId}`;
+    const metricKey = `${this.instanceId}:metrics:${metricType}:${sessionId}`;
     try {
       await this.redis.ts.add(metricKey, Date.now(), value);
     } catch (err) {
@@ -87,7 +88,7 @@ export class SessionManager {
     for (const type of metricTypes) {
       try {
         const data = await this.redis.ts.range(
-          `metrics:${type}:${sessionId}`,
+          `${this.instanceId}:metrics:${type}:${sessionId}`,
           hourAgo,
           now,
           { AGGREGATION: { type: 'AVG', timeBucket: 300000 } } // 5 minute buckets
@@ -102,7 +103,7 @@ export class SessionManager {
     const summary = {};
     for (const type of metricTypes) {
       try {
-        const info = await this.redis.ts.info(`metrics:${type}:${sessionId}`);
+        const info = await this.redis.ts.info(`${this.instanceId}:metrics:${type}:${sessionId}`);
         summary[type] = {
           total: info.totalSamples,
           lastValue: info.lastValue,
@@ -118,10 +119,10 @@ export class SessionManager {
   }
 
   async getCurrentSession(instanceId) {
-    const sessionId = await this.redis.get(`active_session:${instanceId}`);
+    const sessionId = await this.redis.get(`${this.instanceId}:active_session`);
     if (!sessionId) return null;
     
-    const sessionKey = `session:${sessionId}`;
+    const sessionKey = `${instanceId}:session:${sessionId}`;
     const result = await this.redis.sendCommand(['JSON.GET', sessionKey, '$']);
     
     if (!result) return null;

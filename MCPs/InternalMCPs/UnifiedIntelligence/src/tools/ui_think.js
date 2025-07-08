@@ -3,6 +3,39 @@
  * Low-level, programmatic control over sessions, thought capture, and frameworks
  */
 
+// Framework detection logic
+async function detectBestFramework(content) {
+  const lowerContent = content.toLowerCase();
+  
+  // First principles - for fundamental questions
+  if (lowerContent.includes('why') || 
+      lowerContent.includes('what is the purpose') ||
+      lowerContent.includes('fundamentally') ||
+      lowerContent.includes('root cause')) {
+    return 'first-principles';
+  }
+  
+  // SWOT - for evaluations and comparisons
+  if (lowerContent.includes('evaluate') || 
+      lowerContent.includes('compare') ||
+      lowerContent.includes('pros and cons') ||
+      lowerContent.includes('strengths') ||
+      lowerContent.includes('weaknesses')) {
+    return 'swot';
+  }
+  
+  // Six hats - for multi-perspective analysis
+  if (lowerContent.includes('perspectives') || 
+      lowerContent.includes('consider all') ||
+      lowerContent.includes('different angles') ||
+      lowerContent.includes('comprehensive')) {
+    return 'six-hats';
+  }
+  
+  // Default - no specific framework
+  return 'none';
+}
+
 export const ui_think = {
   name: 'ui_think',
   description: 'The Engine - Low-level, programmatic control over sessions, thought capture, and frameworks.',
@@ -12,8 +45,8 @@ export const ui_think = {
     properties: {
       action: {
         type: 'string',
-        enum: ['capture', 'analyze', 'session_start', 'session_end', 'apply_framework'],
-        description: 'The low-level action to perform'
+        enum: ['capture', 'think', 'check_in', 'apply_framework'],
+        description: 'The action to perform'
       },
       content: {
         type: 'string',
@@ -21,7 +54,7 @@ export const ui_think = {
       },
       sessionData: {
         type: 'object',
-        description: 'Session configuration for session_start'
+        description: 'Session configuration for check_in'
       },
       framework: {
         type: 'string', 
@@ -40,33 +73,120 @@ export const ui_think = {
       const { action, content, sessionData, framework, options = {} } = input;
       
       switch (action) {
-        case 'capture':
+        case 'capture': {
           // Direct thought capture with full control
-          return await pipeline.processThought(instanceId, content, {
+          // Get current active session to determine correct instanceId
+          const redis = pipeline.redis;
+          const lastInstance = await redis.get('ui:last_instance');
+          const activeInstanceId = lastInstance || instanceId;
+          return await pipeline.processThought(activeInstanceId, content, {
             ...options,
             lowLevel: true
           });
+        }
           
-        case 'analyze':
-          // Analyze without storing
-          return await pipeline.analyzeOnly(content, options);
+        case 'think': {
+          // Enhanced thinking with auto framework and capture
+          const redis = pipeline.redis;
+          const lastInstance = await redis.get('ui:last_instance');
+          const activeInstanceId = lastInstance || instanceId;
           
-        case 'session_start':
-          // Programmatic session control
-          return await sessionManager.createSession(instanceId, sessionData);
+          // Auto-detect framework if not specified
+          let selectedFramework = options?.framework;
+          if (!selectedFramework || selectedFramework === 'auto') {
+            selectedFramework = await detectBestFramework(content);
+          }
           
-        case 'session_end':
-          // End current session
-          return await sessionManager.endSession(instanceId);
+          // Get significance threshold for this instance
+          const contextKey = `${activeInstanceId}:context`;
+          const contextData = await redis.sendCommand(['JSON.GET', contextKey, '$']);
+          const context = contextData ? JSON.parse(contextData)[0] : {};
+          const significanceThreshold = context.significanceThreshold || 6;
           
-        case 'apply_framework':
+          // Analyze with framework if applicable
+          let analysis;
+          if (selectedFramework && selectedFramework !== 'none') {
+            analysis = await frameworkEngine.applyFramework(
+              selectedFramework,
+              content,
+              { sessionId: await sessionManager.getCurrentSession(activeInstanceId) }
+            );
+          } else {
+            analysis = await pipeline.analyzeOnly(content, options);
+          }
+          
+          // Auto-capture decision based on significance
+          const shouldCapture = options?.capture === 'always' || 
+                               (options?.capture !== 'never' && analysis.significance >= significanceThreshold);
+          
+          if (shouldCapture) {
+            const captureResult = await pipeline.processThought(activeInstanceId, content, {
+              ...options,
+              analysis, // Pass the analysis to avoid re-analyzing
+              framework: selectedFramework
+            });
+            
+            return {
+              ...analysis,
+              captured: true,
+              thoughtId: captureResult.thoughtId,
+              framework: selectedFramework
+            };
+          }
+          
+          return {
+            ...analysis,
+            captured: false,
+            framework: selectedFramework
+          };
+        }
+          
+        case 'check_in': {
+          // Check in and enable enhanced thinking
+          const redis = pipeline.redis;
+          const sessionInstanceId = sessionData?.instanceId || instanceId;
+          
+          // Store significance threshold if provided
+          if (sessionData?.significanceThreshold !== undefined) {
+            const contextKey = `${sessionInstanceId}:context`;
+            const existingContext = await redis.sendCommand(['JSON.GET', contextKey, '$']);
+            const context = existingContext ? JSON.parse(existingContext)[0] : {};
+            
+            await redis.sendCommand([
+              'JSON.SET', contextKey, '$', 
+              JSON.stringify({
+                ...context,
+                significanceThreshold: sessionData.significanceThreshold,
+                lastUpdate: Date.now()
+              })
+            ]);
+          }
+          
+          // Create session
+          const session = await sessionManager.createSession(sessionInstanceId, sessionData);
+          
+          // Enable auto-think for this instance (default true)
+          const enableAutoThink = sessionData?.enableAutoThink !== false;
+          if (enableAutoThink) {
+            await redis.set(`${sessionInstanceId}:auto_think_enabled`, '1');
+          }
+          
+          return {
+            ...session,
+            autoThinkEnabled: enableAutoThink,
+            significanceThreshold: sessionData?.significanceThreshold || 6
+          };
+        }
+
+        case 'apply_framework': {
           // Direct framework application
-          const session = await sessionManager.getCurrentSession(instanceId);
+          const currentSession = await sessionManager.getCurrentSession(instanceId);
           return await frameworkEngine.applyFramework(framework, {
             thoughtId: options.thoughtId,
-            sessionId: session?.sessionId,
+            sessionId: currentSession?.sessionId,
             content: content
           });
+        }
           
         default:
           throw new Error(`Unknown action: ${action}`);

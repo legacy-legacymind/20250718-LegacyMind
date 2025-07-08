@@ -19,6 +19,7 @@ import { RedisManager, SessionManager, ThoughtRecorder } from './storage/index.j
 import { MemoryFormationPipeline } from './pipeline/index.js';
 import { FrameworkEngine } from './frameworks/index.js';
 import { FederationHandler } from './handlers/FederationHandler.js';
+import { AutoCaptureMonitor } from './monitors/AutoCaptureMonitor.js';
 
 // Import tools
 import {
@@ -49,6 +50,7 @@ let thoughtRecorder = null;
 let pipeline = null;
 let frameworkEngine = null;
 let federationHandler = null;
+let autoCapture = null;
 let instanceId = null;
 
 // Initialize components
@@ -63,22 +65,11 @@ async function initialize() {
     
     const redisClient = redisManager.getClient();
     
-    // Initialize storage components
-    sessionManager = new SessionManager(redisClient);
-    thoughtRecorder = new ThoughtRecorder(redisClient);
-    
     // Initialize framework engine
     frameworkEngine = new FrameworkEngine();
     
     // Initialize federation handler
     federationHandler = new FederationHandler(redisClient);
-    
-    // Initialize pipeline
-    pipeline = new MemoryFormationPipeline(
-      redisManager,
-      sessionManager,
-      thoughtRecorder
-    );
     
     // Get instance ID (from environment or generate)
     instanceId = process.env.INSTANCE_ID || 
@@ -86,6 +77,22 @@ async function initialize() {
                  'default';
     
     console.log(`Instance ID: ${instanceId}`);
+    
+    // Re-initialize components with instanceId
+    sessionManager = new SessionManager(redisClient, instanceId);
+    thoughtRecorder = new ThoughtRecorder(redisClient, instanceId);
+    
+    // Initialize pipeline with instanceId
+    pipeline = new MemoryFormationPipeline(
+      redisManager,
+      sessionManager,
+      thoughtRecorder,
+      instanceId
+    );
+    
+    // Initialize auto-capture monitor
+    autoCapture = new AutoCaptureMonitor(redisManager, thoughtRecorder, sessionManager);
+    
     console.log('UnifiedIntelligence v3 initialized successfully');
     
   } catch (error) {

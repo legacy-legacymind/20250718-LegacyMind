@@ -31,7 +31,11 @@ export const ui_context = {
     return async (input) => {
       const { action, data, field } = input;
       const redis = redisManager.getClient();
-      const contextKey = `context:${instanceId}`;
+      
+      // Get the currently active instance from Redis
+      const lastInstance = await redis.get('ui:last_instance');
+      const activeInstanceId = lastInstance || instanceId;
+      const contextKey = `${activeInstanceId}:context`;
       
       switch (action) {
         case 'get':
@@ -47,7 +51,7 @@ export const ui_context = {
             'JSON.GET', contextKey, '$'
           ]);
           return fullContext ? JSON.parse(fullContext)[0] : {
-            instanceId,
+            instanceId: activeInstanceId,
             identity: null,
             currentTask: null,
             goals: [],
@@ -59,7 +63,7 @@ export const ui_context = {
           // Update entire context
           const updatedContext = {
             ...data,
-            instanceId,
+            instanceId: activeInstanceId,
             lastUpdate: Date.now()
           };
           

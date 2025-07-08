@@ -8,11 +8,12 @@ import { AnalyzerOrchestrator } from '../analyzers/index.js';
 import { FrameworkEngine } from '../frameworks/index.js';
 
 export class MemoryFormationPipeline {
-  constructor(redisManager, sessionManager, thoughtRecorder) {
+  constructor(redisManager, sessionManager, thoughtRecorder, instanceId) {
     this.redis = redisManager.getClient();
     this.pubClient = redisManager.getPubClient();
     this.sessionManager = sessionManager;
     this.thoughtRecorder = thoughtRecorder;
+    this.instanceId = instanceId;
     
     this.analyzerOrchestrator = new AnalyzerOrchestrator();
     this.frameworkEngine = new FrameworkEngine();
@@ -27,7 +28,7 @@ export class MemoryFormationPipeline {
 
   async analyzeOnly(content, options = {}) {
     // Analyze without storing - for ui_think tool
-    const analysis = await this.analyzerOrchestrator.analyze(content);
+    const analysis = await this.analyzerOrchestrator.analyzeThought(content);
     
     // Get framework suggestions
     const frameworkSuggestions = this.frameworkEngine.suggestFrameworks(
@@ -86,7 +87,7 @@ export class MemoryFormationPipeline {
       };
       
       // Record the thought
-      await this.thoughtRecorder.recordThought(sessionId, thoughtData);
+      await this.thoughtRecorder.recordThought(sessionId, thoughtData, instanceId);
       
       // Update session activity
       await this.updateSessionActivity(sessionId);
@@ -160,7 +161,7 @@ export class MemoryFormationPipeline {
   }
 
   async updateSessionActivity(sessionId) {
-    const sessionKey = `session:${sessionId}`;
+    const sessionKey = `${this.instanceId}:session:${sessionId}`;
     const now = Date.now();
     
     await this.redis.sendCommand([
@@ -192,7 +193,7 @@ export class MemoryFormationPipeline {
     const patterns = [];
     
     // Get recent thoughts from the session
-    const streamKey = `thoughts:session:${sessionId}`;
+    const streamKey = `${this.instanceId}:thoughts`;
     const recentThoughts = await this.redis.xRevRange(
       streamKey,
       '+',
@@ -309,16 +310,16 @@ export class MemoryFormationPipeline {
   }
 
   async cacheResult(thoughtId, result) {
-    const cacheKey = `cache:thought:${thoughtId}`;
-    await this.redis.setex(
+    const cacheKey = `${this.instanceId}:cache:thought:${thoughtId}`;
+    await this.redis.set(
       cacheKey,
-      300, // 5 minutes TTL
-      JSON.stringify(result)
+      JSON.stringify(result),
+      { EX: 300 } // 5 minutes TTL
     );
   }
 
   async getCachedResult(thoughtId) {
-    const cacheKey = `cache:thought:${thoughtId}`;
+    const cacheKey = `${this.instanceId}:cache:thought:${thoughtId}`;
     const cached = await this.redis.get(cacheKey);
     return cached ? JSON.parse(cached) : null;
   }

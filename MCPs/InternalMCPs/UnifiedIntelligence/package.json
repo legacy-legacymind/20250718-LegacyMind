@@ -6,6 +6,13 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
+    "start:pm2": "pm2 start ecosystem.config.cjs --env production",
+    "start:pm2:dev": "pm2 start ecosystem.config.cjs --env development",
+    "stop:pm2": "pm2 stop unified-intelligence-mcp",
+    "restart:pm2": "pm2 restart unified-intelligence-mcp",
+    "reload:pm2": "pm2 reload unified-intelligence-mcp",
+    "logs:pm2": "pm2 logs unified-intelligence-mcp",
+    "monitor:pm2": "pm2 monit",
     "dev": "node --watch src/index.js",
     "test": "node --test test/**/*.test.js",
     "test:watch": "node --test --watch test/**/*.test.js"
@@ -19,7 +26,8 @@
     "@redis/time-series": "^1.0.5",
     "@redis/bloom": "^1.2.0",
     "dotenv": "^16.3.1",
-    "zod": "^3.22.0"
+    "zod": "^3.22.0",
+    "pm2": "^5.3.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0"

@@ -1,16 +1,16 @@
 export class ThoughtRecorder {
   constructor(redisClient) {
     this.redis = redisClient;
-    this.bloomFilter = 'thoughts:bloom';
   }
 
-  async recordThought(sessionId, thoughtData) {
-    const streamKey = `thoughts:session:${sessionId}`;
+  async recordThought(sessionId, thoughtData, instanceId) {
+    const streamKey = `${instanceId}:thoughts:session:${sessionId}`;
     const thoughtId = thoughtData.thoughtId;
-    const thoughtKey = `thought:${thoughtId}`;
+    const thoughtKey = `${instanceId}:thought:${thoughtId}`;
+    const bloomFilter = `${instanceId}:thoughts:bloom`;
     
     // Check bloom filter for duplicate
-    const isDuplicate = await this.redis.bf.exists(this.bloomFilter, thoughtData.content);
+    const isDuplicate = await this.redis.bf.exists(bloomFilter, thoughtData.content);
     if (isDuplicate) {
       console.log(`[BLOOM] Potential duplicate thought detected: ${thoughtId}`);
       // Still process but flag as potential duplicate
@@ -18,7 +18,7 @@ export class ThoughtRecorder {
     }
     
     // Add to bloom filter
-    await this.redis.bf.add(this.bloomFilter, thoughtData.content);
+    await this.redis.bf.add(bloomFilter, thoughtData.content);
     
     // Store thought with RedisJSON
     const thoughtDoc = {
@@ -50,7 +50,7 @@ export class ThoughtRecorder {
     );
     
     // Record metrics in time series
-    await this.recordMetrics(sessionId, thoughtData);
+    await this.recordMetrics(sessionId, thoughtData, instanceId);
     
     return thoughtId;
   }
@@ -167,13 +167,13 @@ export class ThoughtRecorder {
     // Get aggregated metrics
     const [significance, confidence] = await Promise.all([
       this.redis.ts.range(
-        `metrics:significance:${sessionId}`,
+        `${this.instanceId}:metrics:significance`,
         fromTime,
         now,
         { AGGREGATION: { type: 'AVG', timeBucket: 60000 } } // 1 minute buckets
       ),
       this.redis.ts.range(
-        `metrics:confidence:${sessionId}`,
+        `${this.instanceId}:metrics:confidence`,
         fromTime,
         now,
         { AGGREGATION: { type: 'AVG', timeBucket: 60000 } }
