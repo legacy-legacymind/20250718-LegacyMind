@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.98"
 chrono = { version = "0.4.41", features = ["serde"] }
+redis = { version = "0.32.3", features = ["tokio-comp"] }
 rmcp = { version = "0.2.1", features = ["transport-io"] }
 rmcp-macros = "0.2.1"
 schemars = { version = "0.8.22", features = ["derive"] }

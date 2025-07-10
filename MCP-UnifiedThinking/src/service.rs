@@ -1,26 +1,34 @@
 use anyhow::Result;
-use rmcp::{ServerHandler, handler::server::router::tool::ToolRouter, handler::server::tool::Parameters, model::{*, ErrorData, Content}, tool};
+use rmcp::{
+    handler::server::{router::tool::ToolRouter, tool::Parameters},
+    model::{CallToolResult, Content, ErrorData, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
+    tool, ServerHandler,
+};
 use rmcp_macros::{tool_handler, tool_router};
 use std::sync::Arc;
-
-use crate::tools::think::{ut_think_impl, ut_remember_impl, ThinkParams, RememberParams};
+use crate::{
+    storage::redis_pool::RedisPool,
+    tools::think::{ut_remember_impl, ut_think_impl, RememberParams, ThinkParams},
+};
 
 #[derive(Clone)]
 pub struct ServiceConfig {
     pub instance_id: String,
-    // We will add Redis URL here later
+    pub redis_pool: RedisPool,
 }
 
 #[derive(Clone)]
 pub struct UnifiedThinkingService {
-    tool_router: ToolRouter<Self>,
-    config: Arc<ServiceConfig>,
+    pub tool_router: ToolRouter<Self>,
+    pub config: Arc<ServiceConfig>,
+    pub redis_pool: RedisPool,
 }
 
 impl UnifiedThinkingService {
     pub async fn new(config: ServiceConfig) -> Result<Self> {
         Ok(Self {
             tool_router: Self::tool_router(),
+            redis_pool: config.redis_pool.clone(),
             config: Arc::new(config),
         })
     }

@@ -12,7 +12,7 @@ pub struct Thought {
     /// The ID of the chain this thought belongs to.
     pub chain_id: String,
     /// The sequential number of the thought within its chain.
-    pub thought_number: u32,
+    pub thought_number: i32,
     /// The logical framework applied to this thought.
     pub framework: String,
     /// The original, raw content provided by the user.
