@@ -8,6 +8,7 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::env;
 use std::future::Future;
 use std::sync::Arc;
@@ -33,19 +34,18 @@ struct UiThinkParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct UiRecallParams {
-    #[schemars(description = "Chain ID to retrieve thoughts from")]
-    chain_id: String,
-    #[schemars(description = "Maximum number of thoughts to retrieve (default: 50)")]
+    #[schemars(description = "Search query to find thoughts (e.g., 'Redis performance')")]
+    query: Option<String>,
+    #[schemars(description = "Chain ID to retrieve thoughts from (use this OR query, not both)")]
+    chain_id: Option<String>,
+    #[schemars(description = "Maximum number of results to return (default: 50)")]
     limit: Option<usize>,
+    #[schemars(description = "Action to perform on results: search, merge, analyze, branch, continue")]
+    action: Option<String>,
+    #[schemars(description = "Additional parameters for the action (JSON object)")]
+    action_params: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct UiListChainsParams {
-    #[schemars(description = "Instance ID to filter by (defaults to current instance)")]
-    instance_id: Option<String>,
-    #[schemars(description = "Maximum number of chains to list (default: 20)")]
-    limit: Option<usize>,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ThoughtRecord {
@@ -58,14 +58,6 @@ struct ThoughtRecord {
     chain_id: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct ChainSummary {
-    chain_id: String,
-    instance: String,
-    thought_count: usize,
-    first_thought: String,
-    last_updated: String,
-}
 
 #[derive(Clone)]
 struct UnifiedThinkServer {
@@ -85,10 +77,55 @@ impl UnifiedThinkServer {
         let _: String = redis::cmd("PING").query_async(&mut conn).await?;
         tracing::info!("Redis connection established");
         
-        Ok(Self {
+        let server = Self {
             tool_router: Self::tool_router(),
             redis_pool: Arc::new(pool),
-        })
+        };
+        
+        // Create search index for thoughts
+        server.create_search_index().await?;
+        
+        Ok(server)
+    }
+    
+    async fn create_search_index(&self) -> Result<()> {
+        let mut conn = self.redis_pool.get().await?;
+        
+        // Check if index already exists
+        let index_exists: Result<Vec<String>, _> = redis::cmd("FT._LIST")
+            .query_async(&mut *conn)
+            .await;
+        
+        if let Ok(indices) = index_exists {
+            if indices.contains(&"idx:thoughts".to_string()) {
+                tracing::info!("Search index already exists");
+                return Ok(());
+            }
+        }
+        
+        // Create the index on JSON fields
+        let result: Result<String, _> = redis::cmd("FT.CREATE")
+            .arg("idx:thoughts")
+            .arg("ON").arg("JSON")
+            .arg("PREFIX").arg("1").arg("thought:")
+            .arg("SCHEMA")
+            .arg("$.thought").arg("AS").arg("content").arg("TEXT")
+            .arg("$.instance").arg("AS").arg("instance").arg("TAG")
+            .arg("$.chain_id").arg("AS").arg("chain_id").arg("TAG")
+            .arg("$.timestamp").arg("AS").arg("timestamp").arg("TEXT")
+            .query_async(&mut *conn)
+            .await;
+        
+        match result {
+            Ok(_) => {
+                tracing::info!("Search index created successfully");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!("Failed to create search index: {} - continuing without search", e);
+                Ok(()) // Don't fail startup if search isn't available
+            }
+        }
     }
 }
 
@@ -206,7 +243,7 @@ impl UnifiedThinkServer {
         Ok(CallToolResult::success(vec![content]))
     }
     
-    #[tool(description = "Retrieve thoughts from a specific chain")]
+    #[tool(description = "Search for thoughts or retrieve from chain, with optional actions")]
     pub async fn ui_recall(
         &self,
         params: Parameters<UiRecallParams>,
@@ -218,8 +255,174 @@ impl UnifiedThinkServer {
         let mut conn = self.redis_pool.get().await
             .map_err(|e| ErrorData::internal_error(format!("Failed to get Redis connection: {}", e), None))?;
         
-        // Get thought IDs from chain (in chronological order)
-        let chain_key = format!("chain:{}:{}", instance_id, params.0.chain_id);
+        // Determine if we're searching or retrieving a specific chain
+        let (thoughts, source_info) = if let Some(query) = &params.0.query {
+            // Search mode
+            self.search_thoughts(&mut conn, query, &instance_id, limit).await?
+        } else if let Some(chain_id) = &params.0.chain_id {
+            // Chain retrieval mode (existing functionality)
+            let thoughts = self.get_chain_thoughts(&mut conn, chain_id, &instance_id, limit).await?;
+            let info = json!({
+                "mode": "chain",
+                "chain_id": chain_id,
+                "total": thoughts.len()
+            });
+            (thoughts, info)
+        } else {
+            return Err(ErrorData::invalid_params("Must provide either 'query' or 'chain_id'", None));
+        };
+        
+        // Handle actions if specified
+        let response = if let Some(action) = &params.0.action {
+            match action.as_str() {
+                "search" | "" | "none" => {
+                    // Just return search results
+                    json!({
+                        "source": source_info,
+                        "thoughts": thoughts,
+                        "available_actions": ["branch", "merge", "analyze", "continue"]
+                    })
+                }
+                "analyze" => {
+                    self.analyze_thoughts(&thoughts, &params.0.action_params).await?
+                }
+                "merge" => {
+                    self.merge_chains(&mut conn, &thoughts, &params.0.action_params, &instance_id).await?
+                }
+                "branch" => {
+                    self.branch_from_thought(&mut conn, &params.0.action_params, &instance_id).await?
+                }
+                "continue" => {
+                    self.continue_chain(&mut conn, &params.0.action_params, &instance_id).await?
+                }
+                _ => {
+                    return Err(ErrorData::invalid_params(
+                        format!("Unknown action: {}. Valid actions: search, analyze, merge, branch, continue", action), 
+                        None
+                    ));
+                }
+            }
+        } else {
+            // No action specified, just return results
+            json!({
+                "source": source_info,
+                "thoughts": thoughts,
+                "available_actions": ["branch", "merge", "analyze", "continue"]
+            })
+        };
+        
+        let content = Content::json(response)
+            .map_err(|e| ErrorData::internal_error(format!("Failed to create JSON content: {}", e), None))?;
+        
+        Ok(CallToolResult::success(vec![content]))
+    }
+    
+    // Helper method to search thoughts
+    async fn search_thoughts(
+        &self,
+        conn: &mut deadpool_redis::Connection,
+        query: &str,
+        instance_id: &str,
+        limit: usize
+    ) -> Result<(Vec<ThoughtRecord>, serde_json::Value), ErrorData> {
+        // Try to use FT.SEARCH if available
+        let search_query = format!("@content:{}", query);
+        let search_result: Result<Vec<(String, Vec<(String, String)>)>, _> = redis::cmd("FT.SEARCH")
+            .arg("idx:thoughts")
+            .arg(&search_query)
+            .arg("LIMIT").arg(0).arg(limit)
+            .query_async(&mut *conn)
+            .await;
+        
+        let thoughts = if let Ok(results) = search_result {
+            // Parse search results
+            let mut found_thoughts = Vec::new();
+            for (i, (key, _fields)) in results.iter().enumerate() {
+                if i == 0 { continue; } // Skip count
+                
+                // Get the full thought record
+                let json_result: Result<Option<String>, _> = redis::cmd("JSON.GET")
+                    .arg(key)
+                    .arg("$")
+                    .query_async(&mut *conn)
+                    .await;
+                
+                if let Ok(Some(json_str)) = json_result {
+                    if let Ok(json_array) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
+                        if let Some(thought_value) = json_array.first() {
+                            if let Ok(thought) = serde_json::from_value::<ThoughtRecord>(thought_value.clone()) {
+                                found_thoughts.push(thought);
+                            }
+                        }
+                    }
+                }
+            }
+            found_thoughts
+        } else {
+            // Fallback: scan all thoughts and do simple substring match
+            let pattern = format!("thought:{}:*", instance_id);
+            let mut cursor = "0".to_string();
+            let mut found_thoughts = Vec::new();
+            
+            loop {
+                let (new_cursor, keys): (String, Vec<String>) = redis::cmd("SCAN")
+                    .arg(&cursor)
+                    .arg("MATCH").arg(&pattern)
+                    .arg("COUNT").arg(100)
+                    .query_async(&mut *conn)
+                    .await
+                    .map_err(|e| ErrorData::internal_error(format!("SCAN failed: {}", e), None))?;
+                
+                for key in keys {
+                    let json_result: Result<Option<String>, _> = redis::cmd("JSON.GET")
+                        .arg(&key)
+                        .arg("$")
+                        .query_async(&mut *conn)
+                        .await;
+                    
+                    if let Ok(Some(json_str)) = json_result
+                    {
+                        if let Ok(json_array) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
+                            if let Some(thought_value) = json_array.first() {
+                                if let Ok(thought) = serde_json::from_value::<ThoughtRecord>(thought_value.clone()) {
+                                    if thought.thought.to_lowercase().contains(&query.to_lowercase()) {
+                                        found_thoughts.push(thought);
+                                        if found_thoughts.len() >= limit {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                cursor = new_cursor;
+                if cursor == "0" || found_thoughts.len() >= limit {
+                    break;
+                }
+            }
+            found_thoughts
+        };
+        
+        let info = json!({
+            "mode": "search",
+            "query": query,
+            "found": thoughts.len()
+        });
+        
+        Ok((thoughts, info))
+    }
+    
+    // Helper method to get thoughts from a specific chain
+    async fn get_chain_thoughts(
+        &self,
+        conn: &mut deadpool_redis::Connection,
+        chain_id: &str,
+        instance_id: &str,
+        limit: usize
+    ) -> Result<Vec<ThoughtRecord>, ErrorData> {
+        let chain_key = format!("chain:{}:{}", instance_id, chain_id);
         let thought_ids: Vec<String> = redis::cmd("ZRANGE")
             .arg(&chain_key)
             .arg(0)
@@ -228,124 +431,172 @@ impl UnifiedThinkServer {
             .await
             .map_err(|e| ErrorData::internal_error(format!("Failed to retrieve chain: {}", e), None))?;
         
-        if thought_ids.is_empty() {
-            let response = json!({
-                "chain_id": params.0.chain_id,
-                "thoughts": [],
-                "total": 0
-            });
-            
-            let content = Content::json(response)
-                .map_err(|e| ErrorData::internal_error(format!("Failed to create JSON content: {}", e), None))?;
-            
-            return Ok(CallToolResult::success(vec![content]));
-        }
-        
-        // Retrieve each thought
         let mut thoughts = Vec::new();
-        for thought_id in &thought_ids {
+        for thought_id in thought_ids {
             let thought_key = format!("thought:{}:{}", instance_id, thought_id);
-            let thought_json: Option<String> = redis::cmd("JSON.GET")
+            let json_result: Result<Option<String>, _> = redis::cmd("JSON.GET")
                 .arg(&thought_key)
                 .arg("$")
                 .query_async(&mut *conn)
-                .await
-                .map_err(|e| ErrorData::internal_error(format!("Failed to retrieve thought {}: {}", thought_id, e), None))?;
+                .await;
             
-            if let Some(json_str) = thought_json {
-                // Parse the JSON array response from Redis JSON.GET
+            if let Ok(Some(json_str)) = json_result
+            {
                 if let Ok(json_array) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
                     if let Some(thought_value) = json_array.first() {
-                        if let Ok(thought_record) = serde_json::from_value::<ThoughtRecord>(thought_value.clone()) {
-                            thoughts.push(thought_record);
+                        if let Ok(thought) = serde_json::from_value::<ThoughtRecord>(thought_value.clone()) {
+                            thoughts.push(thought);
                         }
                     }
                 }
             }
         }
         
-        let response = json!({
-            "chain_id": params.0.chain_id,
-            "thoughts": thoughts,
-            "total": thoughts.len()
-        });
-        
-        let content = Content::json(response)
-            .map_err(|e| ErrorData::internal_error(format!("Failed to create JSON content: {}", e), None))?;
-        
-        Ok(CallToolResult::success(vec![content]))
+        Ok(thoughts)
     }
     
-    #[tool(description = "List available thought chains")]
-    pub async fn ui_list_chains(
+    // Analyze thoughts for patterns and insights
+    async fn analyze_thoughts(
         &self,
-        params: Parameters<UiListChainsParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let instance_id = params.0.instance_id.clone()
-            .unwrap_or_else(|| env::var("INSTANCE_ID").unwrap_or_else(|_| "test".to_string()));
-        let limit = params.0.limit.unwrap_or(20);
+        thoughts: &[ThoughtRecord],
+        _params: &Option<serde_json::Value>
+    ) -> Result<serde_json::Value, ErrorData> {
+        if thoughts.is_empty() {
+            return Ok(json!({
+                "analysis": {
+                    "total_thoughts": 0,
+                    "message": "No thoughts to analyze"
+                }
+            }));
+        }
         
-        // Get connection from pool
-        let mut conn = self.redis_pool.get().await
-            .map_err(|e| ErrorData::internal_error(format!("Failed to get Redis connection: {}", e), None))?;
+        // Basic analysis
+        let total = thoughts.len();
+        let avg_length = thoughts.iter().map(|t| t.thought.len()).sum::<usize>() / total;
         
-        // Find all chain metadata keys for this instance
-        let pattern = format!("chain_meta:{}:*", instance_id);
-        let chain_keys: Vec<String> = redis::cmd("KEYS")
-            .arg(&pattern)
-            .query_async(&mut *conn)
-            .await
-            .map_err(|e| ErrorData::internal_error(format!("Failed to list chain keys: {}", e), None))?;
-        
-        let mut chains = Vec::new();
-        for chain_key in chain_keys.iter().take(limit) {
-            // Get chain metadata
-            let chain_meta_json: Option<String> = redis::cmd("JSON.GET")
-                .arg(chain_key)
-                .arg("$")
-                .query_async(&mut *conn)
-                .await
-                .map_err(|e| ErrorData::internal_error(format!("Failed to retrieve chain metadata: {}", e), None))?;
-            
-            if let Some(json_str) = chain_meta_json {
-                if let Ok(json_array) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
-                    if let Some(meta_value) = json_array.first() {
-                        let chain_id = meta_value.get("chain_id").and_then(|v| v.as_str()).unwrap_or("unknown");
-                        let last_updated = meta_value.get("last_updated").and_then(|v| v.as_str()).unwrap_or("unknown");
-                        let first_thought = meta_value.get("first_thought").and_then(|v| v.as_str()).unwrap_or("No content");
-                        
-                        // Get thought count from chain
-                        let chain_data_key = format!("chain:{}:{}", instance_id, chain_id);
-                        let thought_count: usize = redis::cmd("ZCARD")
-                            .arg(&chain_data_key)
-                            .query_async(&mut *conn)
-                            .await
-                            .unwrap_or(0);
-                        
-                        let chain_summary = ChainSummary {
-                            chain_id: chain_id.to_string(),
-                            instance: instance_id.clone(),
-                            thought_count,
-                            first_thought: first_thought.to_string(),
-                            last_updated: last_updated.to_string(),
-                        };
-                        
-                        chains.push(chain_summary);
-                    }
+        // Find most common words (simple frequency analysis)
+        let mut word_freq = HashMap::new();
+        for thought in thoughts {
+            for word in thought.thought.split_whitespace() {
+                let word = word.to_lowercase();
+                if word.len() > 3 { // Skip small words
+                    *word_freq.entry(word).or_insert(0) += 1;
                 }
             }
         }
         
-        let response = json!({
-            "instance": instance_id,
-            "chains": chains,
-            "total": chains.len()
-        });
+        let mut top_words: Vec<_> = word_freq.into_iter().collect();
+        top_words.sort_by(|a, b| b.1.cmp(&a.1));
+        top_words.truncate(10);
         
-        let content = Content::json(response)
-            .map_err(|e| ErrorData::internal_error(format!("Failed to create JSON content: {}", e), None))?;
+        Ok(json!({
+            "analysis": {
+                "total_thoughts": total,
+                "average_length": avg_length,
+                "top_keywords": top_words,
+                "chain_distribution": thoughts.iter()
+                    .filter_map(|t| t.chain_id.as_ref())
+                    .fold(HashMap::new(), |mut acc, chain| {
+                        *acc.entry(chain.clone()).or_insert(0) += 1;
+                        acc
+                    })
+            }
+        }))
+    }
+    
+    // Merge multiple chains into one
+    async fn merge_chains(
+        &self,
+        conn: &mut deadpool_redis::Connection,
+        thoughts: &[ThoughtRecord],
+        params: &Option<serde_json::Value>,
+        instance_id: &str
+    ) -> Result<serde_json::Value, ErrorData> {
+        let params = params.as_ref()
+            .ok_or_else(|| ErrorData::invalid_params("action_params required for merge", None))?;
         
-        Ok(CallToolResult::success(vec![content]))
+        let new_chain_name = params.get("new_chain_name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ErrorData::invalid_params("new_chain_name required", None))?;
+        
+        let new_chain_id = Uuid::new_v4().to_string();
+        let new_chain_key = format!("chain:{}:{}", instance_id, new_chain_id);
+        
+        // Add all thoughts to new chain in chronological order
+        let mut pipe = redis::pipe();
+        for (i, thought) in thoughts.iter().enumerate() {
+            pipe.cmd("ZADD")
+                .arg(&new_chain_key)
+                .arg(i as f64)
+                .arg(&thought.id);
+        }
+        
+        let _: () = pipe.query_async(&mut *conn)
+            .await
+            .map_err(|e| ErrorData::internal_error(format!("Failed to create merged chain: {}", e), None))?;
+        
+        Ok(json!({
+            "action": "merge",
+            "result": {
+                "new_chain_id": new_chain_id,
+                "new_chain_name": new_chain_name,
+                "thought_count": thoughts.len()
+            }
+        }))
+    }
+    
+    // Branch from a specific thought
+    async fn branch_from_thought(
+        &self,
+        _conn: &mut deadpool_redis::Connection,
+        params: &Option<serde_json::Value>,
+        _instance_id: &str
+    ) -> Result<serde_json::Value, ErrorData> {
+        let params = params.as_ref()
+            .ok_or_else(|| ErrorData::invalid_params("action_params required for branch", None))?;
+        
+        let thought_id = params.get("thought_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ErrorData::invalid_params("thought_id required", None))?;
+        
+        let new_chain_name = params.get("new_chain_name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ErrorData::invalid_params("new_chain_name required", None))?;
+        
+        let new_chain_id = Uuid::new_v4().to_string();
+        
+        Ok(json!({
+            "action": "branch",
+            "result": {
+                "new_chain_id": new_chain_id,
+                "new_chain_name": new_chain_name,
+                "branched_from": thought_id,
+                "message": "Use ui_think with this chain_id to continue the branched chain"
+            }
+        }))
+    }
+    
+    // Continue an existing chain
+    async fn continue_chain(
+        &self,
+        _conn: &mut deadpool_redis::Connection,
+        params: &Option<serde_json::Value>,
+        _instance_id: &str
+    ) -> Result<serde_json::Value, ErrorData> {
+        let params = params.as_ref()
+            .ok_or_else(|| ErrorData::invalid_params("action_params required for continue", None))?;
+        
+        let chain_id = params.get("chain_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ErrorData::invalid_params("chain_id required", None))?;
+        
+        Ok(json!({
+            "action": "continue",
+            "result": {
+                "chain_id": chain_id,
+                "message": "Use ui_think with this chain_id to add more thoughts"
+            }
+        }))
     }
 }
 
