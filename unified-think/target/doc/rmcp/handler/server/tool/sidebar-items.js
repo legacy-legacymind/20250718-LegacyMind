@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["IntoCallToolResultFut"],"fn":["cached_schema_for_type","parse_json_object","schema_for_type"],"struct":["AsyncAdapter","Callee","Parameter","Parameters","SyncAdapter","ToolBox","ToolBoxItem","ToolCallContext","ToolName"],"trait":["CallToolHandler","FromToolCallContextPart","IntoCallToolResult"],"type":["DynCallToolHandler"]};

@@ -1,0 +1,142 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="RMCP"><title>rmcp - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-1a91846b.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="rmcp" data-themes="" data-resource-suffix="" data-rustdoc-version="1.88.0 (6b00bc388 2025-06-23)" data-channel="1.88.0" data-search-js="search-f7877310.js" data-settings-js="settings-5514c975.js" ><script src="../static.files/storage-4e99c027.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-7ef8a74a.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../rmcp/index.html">rmcp</a><span class="version">0.1.5</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#rmcp" title="RMCP">RMCP</a><ul><li><a href="#comparing-to-official-sdk" title="Comparing to official SDK">Comparing to official SDK</a></li><li><a href="#usage" title="Usage">Usage</a></li><li><a href="#related-resources" title="Related Resources">Related Resources</a></li></ul></li></ul><h3><a href="#reexports">Crate Items</a></h3><ul class="block"><li><a href="#reexports" title="Re-exports">Re-exports</a></li><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#macros" title="Macros">Macros</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li><li><a href="#attributes" title="Attribute Macros">Attribute Macros</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>rmcp</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/rmcp/lib.rs.html#1-35">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="rmcp"><a class="doc-anchor" href="#rmcp">§</a>RMCP</h2>
+<p><a href="https://crates.io/crates/rmcp"><img src="https://img.shields.io/crates/v/rmcp" alt="Crates.io Version" /></a>
+<img src="https://github.com/4t145/rmcp/actions/workflows/release.yml/badge.svg" alt="Release status" />
+<a href="https://docs.rs/rmcp/latest/rmcp"><img src="https://img.shields.io/docsrs/rmcp" alt="docs.rs" /></a></p>
+<p>A better and clean rust Model Context Protocol SDK implementation with tokio async runtime.</p>
+<h3 id="comparing-to-official-sdk"><a class="doc-anchor" href="#comparing-to-official-sdk">§</a>Comparing to official SDK</h3>
+<p>The <a href="https://github.com/modelcontextprotocol/rust-sdk/pulls">Official SDK</a> has too much limit and it was originally built for <a href="https://github.com/block/goose">goose</a> rather than general using purpose.</p>
+<p>All the features listed on specification would be implemented in this crate. And the first and most important thing is, this crate has the correct and intact data <a href="model/index.html" title="mod rmcp::model">types</a>. See it yourself.</p>
+<h3 id="usage"><a class="doc-anchor" href="#usage">§</a>Usage</h3><h4 id="import"><a class="doc-anchor" href="#import">§</a>Import</h4><div class="example-wrap"><pre class="language-toml"><code>rmcp = { version = &quot;0.1&quot;, features = [&quot;server&quot;] }</code></pre></div><h4 id="quick-start"><a class="doc-anchor" href="#quick-start">§</a>Quick start</h4>
+<p>Start a client in one line:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>
+<span class="kw">let </span>client = ().serve(
+    TokioChildProcess::new(Command::new(<span class="string">"npx"</span>).arg(<span class="string">"-y"</span>).arg(<span class="string">"@modelcontextprotocol/server-everything"</span>))<span class="question-mark">?
+</span>).<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div>
+<p>Start a client in one line:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code>
+<span class="kw">let </span>client = ().serve(
+    TokioChildProcess::new(Command::new(<span class="string">"npx"</span>).arg(<span class="string">"-y"</span>).arg(<span class="string">"@modelcontextprotocol/server-everything"</span>))<span class="question-mark">?
+</span>).<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div>
+<h5 id="1-build-a-transport"><a class="doc-anchor" href="#1-build-a-transport">§</a>1. Build a transport</h5>
+<p>The transport type must implemented <a href="transport/trait.IntoTransport.html" title="trait rmcp::transport::IntoTransport"><code>IntoTransport</code></a> trait, which allow split into a sink and a stream.</p>
+<p>For client, the sink item is <a href="model/type.ClientJsonRpcMessage.html" title="type rmcp::model::ClientJsonRpcMessage"><code>ClientJsonRpcMessage</code></a> and stream item is <a href="model/type.ServerJsonRpcMessage.html" title="type rmcp::model::ServerJsonRpcMessage"><code>ServerJsonRpcMessage</code></a></p>
+<p>For server, the sink item is <a href="model/type.ServerJsonRpcMessage.html" title="type rmcp::model::ServerJsonRpcMessage"><code>ServerJsonRpcMessage</code></a> and stream item is <a href="model/type.ClientJsonRpcMessage.html" title="type rmcp::model::ClientJsonRpcMessage"><code>ClientJsonRpcMessage</code></a></p>
+<h6 id="these-types-is-automatically-implemented-intotransport-trait"><a class="doc-anchor" href="#these-types-is-automatically-implemented-intotransport-trait">§</a>These types is automatically implemented <a href="transport/trait.IntoTransport.html" title="trait rmcp::transport::IntoTransport"><code>IntoTransport</code></a> trait</h6>
+<ol>
+<li>For type that already implement both <a href="../futures_sink/trait.Sink.html" title="trait futures_sink::Sink"><code>Sink</code></a> and <a href="../futures_core/stream/trait.Stream.html" title="trait futures_core::stream::Stream"><code>Stream</code></a> trait, they are automatically implemented <a href="transport/trait.IntoTransport.html" title="trait rmcp::transport::IntoTransport"><code>IntoTransport</code></a> trait</li>
+<li>For tuple of sink <code>Tx</code> and stream <code>Rx</code>, type <code>(Tx, Rx)</code> are automatically implemented <a href="transport/trait.IntoTransport.html" title="trait rmcp::transport::IntoTransport"><code>IntoTransport</code></a> trait</li>
+<li>For type that implement both <a href="../tokio/io/async_read/trait.AsyncRead.html" title="trait tokio::io::async_read::AsyncRead"><code>tokio::io::AsyncRead</code></a> and <a href="../tokio/io/async_write/trait.AsyncWrite.html" title="trait tokio::io::async_write::AsyncWrite"><code>tokio::io::AsyncWrite</code></a> trait, they are automatically implemented <a href="transport/trait.IntoTransport.html" title="trait rmcp::transport::IntoTransport"><code>IntoTransport</code></a> trait</li>
+<li>For tuple of <a href="../tokio/io/async_read/trait.AsyncRead.html" title="trait tokio::io::async_read::AsyncRead"><code>tokio::io::AsyncRead</code></a> <code>R </code>and <a href="../tokio/io/async_write/trait.AsyncWrite.html" title="trait tokio::io::async_write::AsyncWrite"><code>tokio::io::AsyncWrite</code></a> <code>W</code>, type <code>(R, W)</code> are automatically implemented <a href="transport/trait.IntoTransport.html" title="trait rmcp::transport::IntoTransport"><code>IntoTransport</code></a> trait</li>
+</ol>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">use </span>tokio::io::{stdin, stdout};
+<span class="kw">let </span>transport = (stdin(), stdout());</code></pre></div>
+<h5 id="2-build-a-service"><a class="doc-anchor" href="#2-build-a-service">§</a>2. Build a service</h5>
+<p>You can easily build a service by using <a href="handler/server/index.html" title="mod rmcp::handler::server"><code>ServerHandler</code></a> or <a href="crate::handler::client"><code>ClientHandler</code></a>.</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">let </span>service = common::counter::Counter::new();</code></pre></div>
+<p>Or if you want to use <code>tower</code>, you can [<code>TowerHandler</code>] as a adapter.</p>
+<p>You can reference the <a href="https://github.com/4t145/rmcp/tree/release/examples/servers">server examples</a>.</p>
+<h5 id="3-serve-them-together"><a class="doc-anchor" href="#3-serve-them-together">§</a>3. Serve them together</h5>
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="comment">// this call will finish the initialization process
+</span><span class="kw">let </span>server = service.serve(transport).<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div>
+<h5 id="4-interact-with-the-server"><a class="doc-anchor" href="#4-interact-with-the-server">§</a>4. Interact with the server</h5>
+<p>Once the server is initialized, you can send requests or notifications:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="comment">// request 
+</span><span class="kw">let </span>roots = server.list_roots().<span class="kw">await</span><span class="question-mark">?</span>;
+
+<span class="comment">// or send notification
+</span>server.notify_cancelled(...).<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div>
+<h5 id="5-waiting-for-service-shutdown"><a class="doc-anchor" href="#5-waiting-for-service-shutdown">§</a>5. Waiting for service shutdown</h5>
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">let </span>quit_reason = server.waiting().<span class="kw">await</span><span class="question-mark">?</span>;
+<span class="comment">// or cancel it
+</span><span class="kw">let </span>quit_reason = server.cancel().<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div>
+<h4 id="use-marcos-to-declaring-tool"><a class="doc-anchor" href="#use-marcos-to-declaring-tool">§</a>Use marcos to declaring tool</h4>
+<p>Use <code>toolbox</code> and <code>tool</code> macros to create tool quickly.</p>
+<p>Check this <a href="https://github.com/4t145/rmcp/tree/release/examples/servers/src/common/calculator.rs">file</a>.</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">use </span>rmcp::{ServerHandler, model::ServerInfo, schemars, tool};
+
+<span class="kw">use </span><span class="kw">super</span>::counter::Counter;
+
+<span class="attr">#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+</span><span class="kw">pub struct </span>SumRequest {
+    <span class="attr">#[schemars(description = <span class="string">"the left hand side number"</span>)]
+    </span><span class="kw">pub </span>a: i32,
+    <span class="attr">#[schemars(description = <span class="string">"the right hand side number"</span>)]
+    </span><span class="kw">pub </span>b: i32,
+}
+<span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub struct </span>Calculator;
+
+<span class="comment">// create a static toolbox to store the tool attributes
+</span><span class="attr">#[tool(tool_box)]
+</span><span class="kw">impl </span>Calculator {
+    <span class="comment">// async function
+    </span><span class="attr">#[tool(description = <span class="string">"Calculate the sum of two numbers"</span>)]
+    </span><span class="kw">async fn </span>sum(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="attr">#[tool(aggr)] </span>SumRequest { a, b }: SumRequest) -&gt; String {
+        (a + b).to_string()
+    }
+
+    <span class="comment">// sync function
+    </span><span class="attr">#[tool(description = <span class="string">"Calculate the sum of two numbers"</span>)]
+    </span><span class="kw">fn </span>sub(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        <span class="attr">#[tool(param)]
+        </span><span class="comment">// this macro will transfer the schemars and serde's attributes
+        </span><span class="attr">#[schemars(description = <span class="string">"the left hand side number"</span>)]
+        </span>a: i32,
+        <span class="attr">#[tool(param)]
+        #[schemars(description = <span class="string">"the right hand side number"</span>)]
+        </span>b: i32,
+    ) -&gt; String {
+        (a - b).to_string()
+    }
+}
+
+<span class="comment">// impl call_tool and list_tool by querying static toolbox
+</span><span class="attr">#[tool(tool_box)]
+</span><span class="kw">impl </span>ServerHandler <span class="kw">for </span>Calculator {
+    <span class="kw">fn </span>get_info(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ServerInfo {
+        ServerInfo {
+            instructions: <span class="prelude-val">Some</span>(<span class="string">"A simple calculator"</span>.into()),
+            ..Default::default()
+        }
+    }
+}
+</code></pre></div>
+<p>The only thing you should do is to make the function’s return type implement <code>IntoCallToolResult</code>.</p>
+<p>And you can just implement <code>IntoContents</code>, and the return value will be marked as success automatically.</p>
+<p>If you return a type of <code>Result&lt;T, E&gt;</code> where <code>T</code> and <code>E</code> both implemented <code>IntoContents</code>, it’s also OK.</p>
+<h4 id="manage-multi-services"><a class="doc-anchor" href="#manage-multi-services">§</a>Manage Multi Services</h4>
+<p>For many cases you need to manage several service in a collection, you can call <code>into_dyn</code> to convert services into the same type.</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">let </span>service = service.into_dyn();</code></pre></div>
+<h4 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h4>
+<p>See <a href="https://github.com/4t145/rmcp/tree/release/examples/README.md">examples</a></p>
+<h4 id="features"><a class="doc-anchor" href="#features">§</a>Features</h4>
+<ul>
+<li><code>client</code>: use client side sdk</li>
+<li><code>server</code>: use server side sdk</li>
+<li><code>macros</code>: macros default</li>
+</ul>
+<h5 id="transports"><a class="doc-anchor" href="#transports">§</a>Transports</h5>
+<ul>
+<li><code>transport-io</code>: Server stdio transport</li>
+<li><code>transport-sse-server</code>: Server SSE transport</li>
+<li><code>transport-child-process</code>: Client stdio transport</li>
+<li><code>transport-sse</code>: Client sse transport</li>
+</ul>
+<h3 id="related-resources"><a class="doc-anchor" href="#related-resources">§</a>Related Resources</h3>
+<ul>
+<li>
+<p><a href="https://spec.modelcontextprotocol.io/specification/2024-11-05/">MCP Specification</a></p>
+</li>
+<li>
+<p><a href="https://github.com/modelcontextprotocol/specification/blob/main/schema/2024-11-05/schema.ts">Schema</a></p>
+</li>
+</ul>
+</div></details><h2 id="reexports" class="section-header">Re-exports<a href="#reexports" class="anchor">§</a></h2><dl class="item-table reexports"><dt id="reexport.Peer"><code>pub use service::<a class="struct" href="service/struct.Peer.html" title="struct rmcp::service::Peer">Peer</a>;</code></dt><dt id="reexport.Service"><code>pub use service::<a class="trait" href="service/trait.Service.html" title="trait rmcp::service::Service">Service</a>;</code></dt><dt id="reexport.ServiceError"><code>pub use service::<a class="enum" href="service/enum.ServiceError.html" title="enum rmcp::service::ServiceError">ServiceError</a>;</code></dt><dt id="reexport.ServiceExt"><code>pub use service::<a class="trait" href="service/trait.ServiceExt.html" title="trait rmcp::service::ServiceExt">ServiceExt</a>;</code></dt><dt id="reexport.RoleServer"><code>pub use service::<a class="struct" href="service/struct.RoleServer.html" title="struct rmcp::service::RoleServer">RoleServer</a>;</code></dt><dt id="reexport.serve_server"><code>pub use service::<a class="fn" href="service/fn.serve_server.html" title="fn rmcp::service::serve_server">serve_server</a>;</code></dt><dt id="reexport.ServerHandler"><code>pub use handler::server::<a class="trait" href="handler/server/trait.ServerHandler.html" title="trait rmcp::handler::server::ServerHandler">ServerHandler</a>;</code></dt><dt id="reexport.schemars"><code>pub use <a class="mod" href="../schemars/index.html" title="mod schemars">schemars</a>;</code></dt><dt id="reexport.serde"><code>pub use <a class="mod" href="../serde/index.html" title="mod serde">serde</a>;</code></dt><dt id="reexport.serde_json"><code>pub use <a class="mod" href="../serde_json/index.html" title="mod serde_json">serde_json</a>;</code></dt></dl><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="handler/index.html" title="mod rmcp::handler">handler</a></dt><dt><a class="mod" href="model/index.html" title="mod rmcp::model">model</a></dt><dd>Basic data types in MCP specification</dd><dt><a class="mod" href="service/index.html" title="mod rmcp::service">service</a></dt><dt><a class="mod" href="transport/index.html" title="mod rmcp::transport">transport</a></dt><dd>Transport</dd></dl><h2 id="macros" class="section-header">Macros<a href="#macros" class="anchor">§</a></h2><dl class="item-table"><dt><a class="macro" href="macro.const_string.html" title="macro rmcp::const_string">const_<wbr>string</a></dt><dt><a class="macro" href="macro.object.html" title="macro rmcp::object">object</a></dt><dt><a class="macro" href="macro.paste.html" title="macro rmcp::paste">paste</a></dt><dt><a class="macro" href="macro.tool_box.html" title="macro rmcp::tool_box">tool_<wbr>box</a></dt></dl><h2 id="types" class="section-header">Type Aliases<a href="#types" class="anchor">§</a></h2><dl class="item-table"><dt><a class="type" href="type.Error.html" title="type rmcp::Error">Error</a></dt></dl><h2 id="attributes" class="section-header">Attribute Macros<a href="#attributes" class="anchor">§</a></h2><dl class="item-table"><dt><a class="attr" href="attr.tool.html" title="attr rmcp::tool">tool</a></dt></dl><script type="text/json" id="notable-traits-data">{"&[u8]":"<h3>Notable traits for <code>&amp;[<a class=\"primitive\" href=\"https://doc.rust-lang.org/1.88.0/std/primitive.u8.html\">u8</a>]</code></h3><pre><code><div class=\"where\">impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.88.0/std/io/trait.Read.html\" title=\"trait std::io::Read\">Read</a> for &amp;[<a class=\"primitive\" href=\"https://doc.rust-lang.org/1.88.0/std/primitive.u8.html\">u8</a>]</div>","&mut Vec<u8>":"<h3>Notable traits for <code><a class=\"struct\" href=\"https://doc.rust-lang.org/1.88.0/alloc/vec/struct.Vec.html\" title=\"struct alloc::vec::Vec\">Vec</a>&lt;<a class=\"primitive\" href=\"https://doc.rust-lang.org/1.88.0/std/primitive.u8.html\">u8</a>, A&gt;</code></h3><pre><code><div class=\"where\">impl&lt;A&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/1.88.0/std/io/trait.Write.html\" title=\"trait std::io::Write\">Write</a> for <a class=\"struct\" href=\"https://doc.rust-lang.org/1.88.0/alloc/vec/struct.Vec.html\" title=\"struct alloc::vec::Vec\">Vec</a>&lt;<a class=\"primitive\" href=\"https://doc.rust-lang.org/1.88.0/std/primitive.u8.html\">u8</a>, A&gt;<div class=\"where\">where\n    A: <a class=\"trait\" href=\"https://doc.rust-lang.org/1.88.0/core/alloc/trait.Allocator.html\" title=\"trait core::alloc::Allocator\">Allocator</a>,</div></div>","Vec<Content>":"<h3>Notable traits for <code><a class=\"struct\" href=\"https://doc.rust-lang.org/1.88.0/alloc/vec/struct.Vec.html\" title=\"struct alloc::vec::Vec\">Vec</a>&lt;<a class=\"primitive\" href=\"https://doc.rust-lang.org/1.88.0/std/primitive.u8.html\">u8</a>, A&gt;</code></h3><pre><code><div class=\"where\">impl&lt;A&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/1.88.0/std/io/trait.Write.html\" title=\"trait std::io::Write\">Write</a> for <a class=\"struct\" href=\"https://doc.rust-lang.org/1.88.0/alloc/vec/struct.Vec.html\" title=\"struct alloc::vec::Vec\">Vec</a>&lt;<a class=\"primitive\" href=\"https://doc.rust-lang.org/1.88.0/std/primitive.u8.html\">u8</a>, A&gt;<div class=\"where\">where\n    A: <a class=\"trait\" href=\"https://doc.rust-lang.org/1.88.0/core/alloc/trait.Allocator.html\" title=\"trait core::alloc::Allocator\">Allocator</a>,</div></div>","Vec<u8>":"<h3>Notable traits for <code><a class=\"struct\" href=\"https://doc.rust-lang.org/1.88.0/alloc/vec/struct.Vec.html\" title=\"struct alloc::vec::Vec\">Vec</a>&lt;<a class=\"primitive\" href=\"https://doc.rust-lang.org/1.88.0/std/primitive.u8.html\">u8</a>, A&gt;</code></h3><pre><code><div class=\"where\">impl&lt;A&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/1.88.0/std/io/trait.Write.html\" title=\"trait std::io::Write\">Write</a> for <a class=\"struct\" href=\"https://doc.rust-lang.org/1.88.0/alloc/vec/struct.Vec.html\" title=\"struct alloc::vec::Vec\">Vec</a>&lt;<a class=\"primitive\" href=\"https://doc.rust-lang.org/1.88.0/std/primitive.u8.html\">u8</a>, A&gt;<div class=\"where\">where\n    A: <a class=\"trait\" href=\"https://doc.rust-lang.org/1.88.0/core/alloc/trait.Allocator.html\" title=\"trait core::alloc::Allocator\">Allocator</a>,</div></div>"}</script></section></div></main></body></html>

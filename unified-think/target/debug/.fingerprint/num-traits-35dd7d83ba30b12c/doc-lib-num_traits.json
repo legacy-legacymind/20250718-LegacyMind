@@ -1,0 +1,1 @@
+{"rustc":14565759800141205689,"features":"[]","declared_features":"[\"default\", \"i128\", \"libm\", \"std\"]","target":4278088450330190724,"profile":11723298867167628662,"path":17346399739562816456,"deps":[[5157631553186200874,"build_script_build",false,11537171977829212005]],"local":[{"Precalculated":"0.2.19"}],"rustflags":[],"config":2069994364910194474,"compile_kind":0}
