@@ -1,0 +1,7 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running `target/debug/unified-think`
+2025-07-11T14:51:19.397973Z  INFO Redis connection established
+2025-07-11T14:51:19.399459Z  INFO Search index already exists
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"unified-think","version":"0.1.0"},"instructions":"UnifiedThink MCP Server for capturing thoughts with Redis persistence"}}
+2025-07-11T14:51:19.400187Z ERROR Error reading from stream: serde error data did not match any variant of untagged enum JsonRpcMessage
+Error: connection closed: initialize notification

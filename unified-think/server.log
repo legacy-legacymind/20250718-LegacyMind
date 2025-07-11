@@ -1,2 +1,3 @@
-2025-07-11T02:07:08.781824Z  INFO serve_inner: Service initialized as server peer_info=InitializeRequestParam { protocol_version: ProtocolVersion("2024-11-05"), capabilities: ClientCapabilities { experimental: None, roots: None, sampling: None }, client_info: Implementation { name: "test", version: "1.0" } }
-Server shutting down
+2025-07-11T16:19:17.099264Z  INFO Redis connection established
+2025-07-11T16:19:17.103572Z  INFO Search index already exists
+Error: connection closed: initialize notification

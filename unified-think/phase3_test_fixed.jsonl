@@ -1,0 +1,11 @@
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"phase3-test","version":"1.0"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ui_think","arguments":{"thought":"Redis performance optimization strategies","thought_number":1,"total_thoughts":2,"next_thought_needed":true,"chain_id":"perf-chain-1"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"ui_think","arguments":{"thought":"Implementing Redis pipeline for batch operations","thought_number":2,"total_thoughts":2,"next_thought_needed":false,"chain_id":"perf-chain-1"}}}
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"ui_think","arguments":{"thought":"Understanding Redis memory management","thought_number":1,"total_thoughts":1,"next_thought_needed":false,"chain_id":"memory-chain-1"}}}
+{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"ui_recall","arguments":{"query":"Redis performance"}}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"ui_recall","arguments":{"chain_id":"perf-chain-1"}}}
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"ui_recall","arguments":{"query":"Redis","action":"analyze"}}}
+{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"ui_recall","arguments":{"query":"Redis","action":"merge","action_params":{"new_chain_name":"Redis Combined Knowledge"}}}}
+{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"ui_recall","arguments":{"action":"branch","action_params":{"thought_id":"test-thought-id","new_chain_name":"Alternative Approach"}}}}

@@ -1,1 +1,1 @@
-/Users/samuelatagana/Projects/LegacyMind/unified-think/target/release/unified-think: /Users/samuelatagana/Projects/LegacyMind/unified-think/src/main.rs
+/Users/samuelatagana/Projects/LegacyMind/unified-think-phase3/unified-think/target/release/unified-think: /Users/samuelatagana/Projects/LegacyMind/unified-think-phase3/unified-think/src/main.rs /Users/samuelatagana/Projects/LegacyMind/unified-think-phase3/unified-think/src/search_optimization.rs /Users/samuelatagana/Projects/LegacyMind/unified-think-phase3/unified-think/src/validation.rs
