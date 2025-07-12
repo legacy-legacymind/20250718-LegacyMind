@@ -1,4 +1,3 @@
-use uuid::Uuid;
 use thiserror::Error;
 use std::env;
 

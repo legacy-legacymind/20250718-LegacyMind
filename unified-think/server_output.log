@@ -1,0 +1,9 @@
+2025-07-12T23:00:07.518648Z  INFO Initializing UnifiedThink service for instance: test
+2025-07-12T23:00:07.518704Z  INFO Connecting to Redis at localhost:6379 (db: 0)
+2025-07-12T23:00:07.523390Z  INFO Redis connection established
+2025-07-12T23:00:07.527418Z  INFO Successfully loaded all Lua scripts
+2025-07-12T23:00:07.528934Z  INFO Created native Redis bloom filter for instance test with 0.01 error rate and 100k capacity
+2025-07-12T23:00:07.529980Z  INFO Created event stream for instance test with ID 1752361207529-0
+2025-07-12T23:00:07.531412Z  WARN Redis Vector Sets module not available, semantic search disabled
+2025-07-12T23:00:07.532132Z  INFO Search index already exists
+Error: connection closed: initialized request

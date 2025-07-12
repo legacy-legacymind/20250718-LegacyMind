@@ -1,0 +1,5 @@
+2025-07-12T01:50:51.782768Z  INFO Initializing UnifiedThink service for instance: CC
+2025-07-12T01:50:51.782825Z  INFO Connecting to Redis at localhost:6379 (db: 0)
+2025-07-12T01:50:51.785773Z  INFO Redis connection established
+2025-07-12T01:50:51.786393Z  WARN Failed to create search index: An error was signalled by the server - ResponseError: unknown command 'FT.CREATE', with args beginning with: 'idx:thoughts' 'ON' 'JSON' 'PREFIX' '1' 'thought:' 'SCHEMA' '$.thought' 'AS' 'content' 'TEXT' '$.instance' 'AS' 'instance' 'TAG' . Search will not be available.
+Error: connection closed: initialized request

@@ -11,6 +11,8 @@ mod service;
 mod search_optimization;
 mod validation;
 mod rate_limit;
+mod lua_scripts;
+mod embeddings;
 
 use crate::service::UnifiedThinkService;
 

@@ -18,6 +18,9 @@ pub enum UnifiedThinkError {
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
     
+    #[error("JSON error: {0}")]
+    Json(serde_json::Error),
+    
     #[error("Validation error: {field} - {reason}")]
     Validation { field: String, reason: String },
     
@@ -41,6 +44,12 @@ pub enum UnifiedThinkError {
     
     #[error("Internal error: {0}")]
     Internal(String),
+    
+    #[error("Operation timed out after {0} seconds")]
+    Timeout(u64),
+    
+    #[error("Configuration error: {0}")]
+    Configuration(String),
 }
 
 /// Convert ValidationError to UnifiedThinkError

@@ -4,8 +4,8 @@ use tracing;
 
 use crate::error::{Result, UnifiedThinkError};
 use crate::models::{
-    UiThinkParams, UiRecallParams, ThoughtRecord, ThinkResponse, 
-    RecallResponse, ChainMetadata
+    UiThinkParams, UiRecallParams, UiIdentityParams, ThoughtRecord, ThinkResponse, 
+    RecallResponse, ChainMetadata, IdentityResponse, IdentityOperation, Identity
 };
 use crate::repository::ThoughtRepository;
 use crate::search_optimization::SearchCache;
@@ -101,7 +101,13 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         let thoughts = if let Some(chain_id) = &params.chain_id {
             self.repository.get_chain_thoughts(&self.instance_id, chain_id).await?
         } else if let Some(query) = &params.query {
-            self.repository.search_thoughts(&self.instance_id, query, limit).await?
+            if params.semantic_search.unwrap_or(false) {
+                // Use semantic search
+                self.repository.search_thoughts_semantic(&self.instance_id, query, limit).await?
+            } else {
+                // Use regular text search
+                self.repository.search_thoughts(&self.instance_id, query, limit).await?
+            }
         } else {
             self.repository.get_instance_thoughts(&self.instance_id, limit).await?
         };
@@ -157,7 +163,9 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         Ok(RecallResponse {
             thoughts: final_thoughts,
             total_found,
-            search_method: if self.search_available.load(std::sync::atomic::Ordering::SeqCst) {
+            search_method: if params.semantic_search.unwrap_or(false) {
+                "semantic_vector_search".to_string()
+            } else if self.search_available.load(std::sync::atomic::Ordering::SeqCst) {
                 "redis_search".to_string()
             } else {
                 "fallback_scan".to_string()
@@ -323,5 +331,220 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             "ready_for_next": true,
             "next_thought_number": last_thought.thought_number + 1
         }))
+    }
+    
+    /// Handle ui_identity tool
+    pub async fn ui_identity(&self, params: UiIdentityParams) -> Result<IdentityResponse> {
+        let operation = params.operation.unwrap_or(IdentityOperation::View);
+        
+        tracing::info!(
+            "Identity operation '{:?}' for instance '{}' - category: {:?}, field: {:?}",
+            operation, self.instance_id, params.category, params.field
+        );
+        
+        match operation {
+            IdentityOperation::View => {
+                let identity = self.get_or_create_identity().await?;
+                Ok(IdentityResponse::View {
+                    identity,
+                    available_categories: vec![
+                        "core_info", "communication", "relationships", 
+                        "work_preferences", "behavioral_patterns", 
+                        "technical_profile", "context_awareness", "memory_preferences"
+                    ],
+                })
+            }
+            
+            IdentityOperation::Add => {
+                let category = params.category.ok_or_else(|| UnifiedThinkError::Validation {
+                    field: "category".to_string(),
+                    reason: "category required for add operation".to_string(),
+                })?;
+                let field = params.field.ok_or_else(|| UnifiedThinkError::Validation {
+                    field: "field".to_string(),
+                    reason: "field required for add operation".to_string(),
+                })?;
+                let value = params.value.ok_or_else(|| UnifiedThinkError::Validation {
+                    field: "value".to_string(),
+                    reason: "value required for add operation".to_string(),
+                })?;
+                
+                self.add_to_identity_field(&category, &field, value).await?;
+                Ok(IdentityResponse::Updated { 
+                    operation: "add".to_string(),
+                    category, 
+                    field: Some(field),
+                    success: true,
+                })
+            }
+            
+            IdentityOperation::Modify => {
+                let category = params.category.ok_or_else(|| UnifiedThinkError::Validation {
+                    field: "category".to_string(),
+                    reason: "category required for modify operation".to_string(),
+                })?;
+                let field = params.field.ok_or_else(|| UnifiedThinkError::Validation {
+                    field: "field".to_string(),
+                    reason: "field required for modify operation".to_string(),
+                })?;
+                let value = params.value.ok_or_else(|| UnifiedThinkError::Validation {
+                    field: "value".to_string(),
+                    reason: "value required for modify operation".to_string(),
+                })?;
+                
+                self.modify_identity_field(&category, &field, value).await?;
+                Ok(IdentityResponse::Updated { 
+                    operation: "modify".to_string(),
+                    category,
+                    field: Some(field),
+                    success: true,
+                })
+            }
+            
+            IdentityOperation::Delete => {
+                let category = params.category.ok_or_else(|| UnifiedThinkError::Validation {
+                    field: "category".to_string(),
+                    reason: "category required for delete operation".to_string(),
+                })?;
+                let field = params.field.ok_or_else(|| UnifiedThinkError::Validation {
+                    field: "field".to_string(),
+                    reason: "field required for delete operation".to_string(),
+                })?;
+                
+                self.delete_from_identity_field(&category, &field, params.value).await?;
+                Ok(IdentityResponse::Updated { 
+                    operation: "delete".to_string(),
+                    category,
+                    field: Some(field),
+                    success: true,
+                })
+            }
+        }
+    }
+    
+    // Helper methods for identity operations
+    
+    async fn get_or_create_identity(&self) -> Result<Identity> {
+        let identity_key = format!("{}/identity", self.instance_id);
+        
+        // Try to get existing identity using Redis JSON.GET
+        if let Some(identity) = self.repository.get_identity(&identity_key).await? {
+            Ok(identity)
+        } else {
+            // Create default identity for this instance
+            let identity = Identity::default_for_instance(&self.instance_id);
+            self.repository.save_identity(&identity_key, &identity).await?;
+            Ok(identity)
+        }
+    }
+    
+    async fn add_to_identity_field(&self, category: &str, field: &str, value: serde_json::Value) -> Result<()> {
+        let identity_key = format!("{}/identity", self.instance_id);
+        
+        // Add to array fields using Redis JSON operations
+        match field {
+            // Array fields that support appending
+            "common_mistakes" | "strengths" | "triggers" | "improvement_areas" 
+            | "preferred_languages" | "frameworks" | "tools" | "expertise_areas" 
+            | "learning_interests" | "active_goals" | "core_values" 
+            | "boundaries" | "shared_history" | "priority_topics" => {
+                let path = format!("$.{}.{}", category, field);
+                self.repository.json_array_append(&identity_key, &path, &value).await?;
+            }
+            
+            // Object fields (like relationships map) or scalar fields
+            _ => {
+                let path = format!("$.{}.{}", category, field);
+                self.repository.json_set(&identity_key, &path, &value).await?;
+            }
+        }
+        
+        // Update metadata
+        self.update_identity_metadata(&identity_key).await?;
+        
+        // Log the change
+        self.repository.log_event(
+            &self.instance_id,
+            "identity_updated",
+            vec![
+                ("operation", "add"),
+                ("category", category),
+                ("field", field),
+            ]
+        ).await?;
+        
+        Ok(())
+    }
+    
+    async fn modify_identity_field(&self, category: &str, field: &str, value: serde_json::Value) -> Result<()> {
+        let identity_key = format!("{}/identity", self.instance_id);
+        let path = format!("$.{}.{}", category, field);
+        
+        // Use Redis JSON.SET for direct field modification
+        self.repository.json_set(&identity_key, &path, &value).await?;
+        
+        // Update metadata and log
+        self.update_identity_metadata(&identity_key).await?;
+        self.repository.log_event(
+            &self.instance_id,
+            "identity_updated",
+            vec![
+                ("operation", "modify"),
+                ("category", category),
+                ("field", field),
+            ]
+        ).await?;
+        
+        Ok(())
+    }
+    
+    async fn delete_from_identity_field(&self, category: &str, field: &str, value: Option<serde_json::Value>) -> Result<()> {
+        let identity_key = format!("{}/identity", self.instance_id);
+        
+        if let Some(target_value) = value {
+            // Remove specific value from array - requires getting array, filtering, setting back
+            let path = format!("$.{}.{}", category, field);
+            if let Some(current_array) = self.repository.json_get_array(&identity_key, &path).await? {
+                let filtered: Vec<serde_json::Value> = current_array
+                    .into_iter()
+                    .filter(|v| v != &target_value)
+                    .collect();
+                self.repository.json_set(&identity_key, &path, &serde_json::Value::Array(filtered)).await?;
+            }
+        } else {
+            // Delete entire field using JSON.DEL
+            let path = format!("$.{}.{}", category, field);
+            self.repository.json_delete(&identity_key, &path).await?;
+        }
+        
+        // Update metadata and log
+        self.update_identity_metadata(&identity_key).await?;
+        self.repository.log_event(
+            &self.instance_id,
+            "identity_updated",
+            vec![
+                ("operation", "delete"),
+                ("category", category),
+                ("field", field),
+            ]
+        ).await?;
+        
+        Ok(())
+    }
+    
+    async fn update_identity_metadata(&self, identity_key: &str) -> Result<()> {
+        let now = chrono::Utc::now();
+        
+        // Update metadata fields using JSON.SET
+        self.repository.json_set(
+            identity_key, 
+            "$.metadata.last_updated", 
+            &serde_json::Value::String(now.to_rfc3339())
+        ).await?;
+        
+        // Increment update count using JSON.NUMINCRBY
+        self.repository.json_increment(identity_key, "$.metadata.update_count", 1).await?;
+        
+        Ok(())
     }
 }

@@ -9,7 +9,7 @@ use rmcp_macros::{tool, tool_handler, tool_router};
 use tracing;
 
 use crate::error::UnifiedThinkError;
-use crate::models::{UiThinkParams, UiRecallParams};
+use crate::models::{UiThinkParams, UiRecallParams, UiIdentityParams};
 use crate::redis::RedisManager;
 use crate::repository::RedisThoughtRepository;
 use crate::handlers::ToolHandlers;
@@ -35,6 +35,15 @@ impl UnifiedThinkService {
         
         // Initialize Redis
         let redis_manager = Arc::new(RedisManager::new().await?);
+        
+        // Initialize Bloom filter for this instance
+        redis_manager.init_bloom_filter(&instance_id).await?;
+        
+        // Initialize event stream for this instance
+        redis_manager.init_event_stream(&instance_id).await?;
+        
+        // Initialize vector set for semantic search
+        redis_manager.init_vector_set(&instance_id).await?;
         
         // Check for search capability
         let search_available = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -126,6 +135,33 @@ impl UnifiedThinkService {
             },
             Err(e) => {
                 tracing::error!("ui_recall error: {}", e);
+                Err(ErrorData::internal_error(e.to_string(), None))
+            }
+        }
+    }
+    
+    #[tool(description = "View and manage persistent identity through structured categories")]
+    pub async fn ui_identity(
+        &self,
+        params: Parameters<UiIdentityParams>,
+    ) -> std::result::Result<CallToolResult, ErrorData> {
+        // Check rate limit
+        if let Err(e) = self.rate_limiter.check_rate_limit(&self.instance_id).await {
+            tracing::warn!("Rate limit hit for instance {}: {}", self.instance_id, e);
+            return Err(ErrorData::invalid_params(
+                format!("Rate limit exceeded. Please slow down your requests."), 
+                None
+            ));
+        }
+        
+        match self.handlers.ui_identity(params.0).await {
+            Ok(response) => {
+                let content = Content::json(response)
+                    .map_err(|e| ErrorData::internal_error(format!("Failed to create JSON content: {}", e), None))?;
+                Ok(CallToolResult::success(vec![content]))
+            },
+            Err(e) => {
+                tracing::error!("ui_identity error: {}", e);
                 Err(ErrorData::internal_error(e.to_string(), None))
             }
         }
