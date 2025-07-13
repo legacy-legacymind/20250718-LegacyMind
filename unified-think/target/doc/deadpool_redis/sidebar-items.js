@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["ConfigError","ConnectionAddr","ProtocolVersion","Runtime"],"struct":["Config","Connection","ConnectionInfo","Manager","Metrics","PoolConfig","RedisConnectionInfo","Status","Timeouts"],"type":["BuildError","CreatePoolError","Hook","HookError","Object","Pool","PoolBuilder","PoolError"]};

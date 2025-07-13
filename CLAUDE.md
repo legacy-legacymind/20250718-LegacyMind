@@ -1,0 +1,1 @@
+/Users/samuelatagana/Library/Mobile Documents/iCloud~md~obsidian/Documents/LegacyMind/⛔️ Symlinks/Claude Code/_CC_BRAIN_/CLAUDE.md

@@ -1,0 +1,20 @@
+embedding_service:
+  redis:
+    url: "redis://:${REDIS_PASSWORD}@localhost:6379/0"
+    stream_key: "${INSTANCE_ID}:events"
+  openai:
+    api_key_source: "redis"  # or "env"
+    model: "text-embedding-3-small"
+    rate_limit_rps: 10       # requests per second
+  processing:
+    max_retries: 3
+    retry_backoff_base: 60   # seconds
+    max_retry_delay: 300     # seconds
+    batch_size: 10
+    rate_limit_delay: 0.1    # 100ms between API calls
+  monitoring:
+    metrics_interval: 60     # seconds
+    log_level: "INFO"
+  consumer:
+    group_name: "embedding_processors"
+    consumer_prefix: "embedder"

@@ -1,0 +1,5 @@
+# Background Embedding Service Requirements
+redis[asyncio]==5.0.1
+openai==1.12.0
+numpy==1.24.3
+pyyaml==6.0.1
