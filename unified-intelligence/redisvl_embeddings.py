@@ -99,7 +99,7 @@ class UnifiedIntelligenceVectorService:
             print(f"Error storing thought embedding: {e}", file=sys.stderr)
             return False
     
-    def semantic_search(self, query: str, limit: int = 10, threshold: float = 0.7) -> list:
+    def semantic_search(self, query: str, limit: int = 10, threshold: float = 0.5) -> list:
         """Perform semantic search"""
         try:
             query_embedding = self.generate_embedding(query)
@@ -170,7 +170,7 @@ def main():
         
         query = sys.argv[2]
         limit = int(sys.argv[3]) if len(sys.argv) > 3 else 10
-        threshold = float(sys.argv[4]) if len(sys.argv) > 4 else 0.7
+        threshold = float(sys.argv[4]) if len(sys.argv) > 4 else 0.5
         
         results = service.semantic_search(query, limit, threshold)
         print(json.dumps({"results": results}))

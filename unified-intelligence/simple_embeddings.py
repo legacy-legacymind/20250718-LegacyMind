@@ -9,6 +9,7 @@ import json
 import os
 import redis
 import numpy as np
+import re
 from openai import OpenAI
 
 
@@ -19,12 +20,34 @@ class SimpleEmbeddingService:
         self.openai_client = OpenAI(api_key=openai_api_key)
         self.instance = instance
     
+    def _preprocess_text(self, text: str) -> str:
+        """Clean and normalize text before embedding generation"""
+        if not text:
+            return ""
+        
+        # Normalize whitespace
+        text = re.sub(r'\s+', ' ', text.strip())
+        
+        # Normalize quotes
+        text = text.replace('"', '"').replace('"', '"')
+        text = text.replace(''', "'").replace(''', "'")
+        
+        # Remove excessive punctuation
+        text = re.sub(r'[.]{2,}', '.', text)
+        text = re.sub(r'[!]{2,}', '!', text)
+        text = re.sub(r'[?]{2,}', '?', text)
+        
+        return text
+    
     def generate_embedding(self, text: str) -> list:
         """Generate embedding using OpenAI"""
         try:
+            # Preprocess text before sending to API
+            processed_text = self._preprocess_text(text)
+            
             response = self.openai_client.embeddings.create(
                 model="text-embedding-3-small",
-                input=text
+                input=processed_text
             )
             return response.data[0].embedding
         except Exception as e:
@@ -44,7 +67,9 @@ class SimpleEmbeddingService:
                 "content": content,
                 "embedding": embedding,
                 "timestamp": timestamp,
-                "instance": self.instance
+                "instance": self.instance,
+                "provider": "openai",
+                "model": "text-embedding-3-small"
             }
             
             # Store in Redis
@@ -61,7 +86,7 @@ class SimpleEmbeddingService:
             print(f"Error storing thought embedding: {e}", file=sys.stderr)
             return False
     
-    def semantic_search(self, query: str, limit: int = 10, threshold: float = 0.7) -> list:
+    def semantic_search(self, query: str, limit: int = 10, threshold: float = 0.5) -> list:
         """Perform semantic search using cosine similarity"""
         try:
             query_embedding = self.generate_embedding(query)
@@ -70,7 +95,9 @@ class SimpleEmbeddingService:
             
             # Get all stored embeddings
             pattern = f"{self.instance}:embeddings:*"
+            print(f"DEBUG: Searching for keys with pattern: {pattern}", file=sys.stderr)
             keys = self.redis_client.keys(pattern)
+            print(f"DEBUG: Found {len(keys)} keys matching pattern", file=sys.stderr)
             
             similarities = []
             for key in keys:
@@ -92,6 +119,7 @@ class SimpleEmbeddingService:
             
             # Sort by similarity and return top results
             similarities.sort(key=lambda x: x["similarity"], reverse=True)
+            print(f"DEBUG: Found {len(similarities)} results above threshold {threshold}", file=sys.stderr)
             return similarities[:limit]
             
         except Exception as e:
@@ -99,11 +127,13 @@ class SimpleEmbeddingService:
             return []
     
     def _cosine_similarity(self, a: list, b: list) -> float:
-        """Calculate cosine similarity between two vectors"""
+        """Calculate cosine similarity between two vectors
+        OpenAI embeddings are pre-normalized, so we can use simple dot product"""
         try:
             a = np.array(a)
             b = np.array(b)
-            return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+            # OpenAI embeddings are pre-normalized, so dot product is sufficient
+            return np.dot(a, b)
         except Exception:
             return 0.0
 
@@ -120,6 +150,7 @@ def main():
     redis_password = os.getenv('REDIS_PASSWORD', '')
     redis_url = f"redis://:{redis_password}@localhost:6379/0"
     instance = os.getenv('INSTANCE_ID', 'Claude')
+    print(f"DEBUG: Using instance ID: {instance}", file=sys.stderr)
     
     # Try to connect to Redis first to check for API key
     temp_redis = redis.from_url(redis_url)
@@ -162,7 +193,9 @@ def main():
         
         query = sys.argv[2]
         limit = int(sys.argv[3]) if len(sys.argv) > 3 else 10
-        threshold = float(sys.argv[4]) if len(sys.argv) > 4 else 0.7
+        threshold = float(sys.argv[4]) if len(sys.argv) > 4 else 0.5
+        
+        print(f"DEBUG: Search parameters - query: '{query}', limit: {limit}, threshold: {threshold}", file=sys.stderr)
         
         results = service.semantic_search(query, limit, threshold)
         print(json.dumps({"results": results}))

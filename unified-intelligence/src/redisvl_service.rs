@@ -89,31 +89,48 @@ impl RedisVLService {
         // Get API key from Redis or environment
         let api_key = self.get_openai_api_key().await?;
         
-        tracing::debug!("RedisVL semantic_search - Using API key with {} chars", api_key.len());
+        tracing::info!("RedisVL semantic_search - Starting search");
+        tracing::info!("  Instance ID: {}", &self.instance_id);
+        tracing::info!("  Query: {}", query);
+        tracing::info!("  Limit: {}", limit);
+        tracing::info!("  Threshold: {}", threshold);
+        tracing::info!("  API key length: {} chars", api_key.len());
+        tracing::info!("  Script path: {}", &self.script_path);
         
-        let output = Command::new("python3")
-            .arg(&self.script_path)
+        let mut cmd = Command::new("python3");
+        cmd.arg(&self.script_path)
             .arg("search")
             .arg(query)
             .arg(limit.to_string())
             .arg(threshold.to_string())
             .env("INSTANCE_ID", &self.instance_id)
             .env("REDIS_PASSWORD", "legacymind_redis_pass")
-            .env("OPENAI_API_KEY", api_key)
-            .output()
+            .env("OPENAI_API_KEY", api_key);
+        
+        tracing::info!("Executing Python command: {:?}", cmd);
+        
+        let output = cmd.output()
             .map_err(|e| UnifiedIntelligenceError::Python(format!("Failed to execute Python script: {}", e)))?;
         
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(UnifiedIntelligenceError::Python(format!("Python script failed: {}", stderr)));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        
+        tracing::info!("Python script stdout: {}", stdout);
+        if !stderr.is_empty() {
+            tracing::warn!("Python script stderr: {}", stderr);
         }
         
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        if !output.status.success() {
+            return Err(UnifiedIntelligenceError::Python(format!("Python script failed with status {:?}. Stderr: {}", output.status, stderr)));
+        }
+        
         let response: Value = serde_json::from_str(&stdout)
-            .map_err(|e| UnifiedIntelligenceError::Python(format!("Failed to parse Python response: {}", e)))?;
+            .map_err(|e| UnifiedIntelligenceError::Python(format!("Failed to parse Python response: {}. Raw output: {}", e, stdout)))?;
         
         let results = response["results"].as_array()
-            .ok_or_else(|| UnifiedIntelligenceError::Python("No results array in response".to_string()))?;
+            .ok_or_else(|| UnifiedIntelligenceError::Python(format!("No results array in response. Full response: {}", response)))?;
+        
+        tracing::info!("Found {} results from Python script", results.len());
         
         let mut thoughts = Vec::new();
         for result in results {
@@ -137,6 +154,7 @@ impl RedisVLService {
             }
         }
         
+        tracing::info!("Returning {} thoughts from semantic search", thoughts.len());
         Ok(thoughts)
     }
 }

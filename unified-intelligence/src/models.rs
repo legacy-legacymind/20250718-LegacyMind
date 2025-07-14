@@ -47,6 +47,9 @@ pub struct UiRecallParams {
     
     #[schemars(description = "Similarity threshold for semantic search (0.0-1.0, default: 0.7)")]
     pub threshold: Option<f32>,
+    
+    #[schemars(description = "Search across all instances instead of just current instance (default: false)")]
+    pub search_all_instances: Option<bool>,
 }
 
 /// Core thought record structure stored in Redis
@@ -143,6 +146,7 @@ pub enum IdentityOperation {
     Add,       // Add to a list/map in a category
     Modify,    // Change existing value
     Delete,    // Remove from list/map
+    Help,      // Show comprehensive help documentation
 }
 
 /// Parameters for the ui_debug_env tool
@@ -173,6 +177,45 @@ pub enum IdentityResponse {
         field: Option<String>,
         success: bool,
     },
+    Help {
+        operations: Vec<OperationHelp>,
+        categories: Vec<CategoryHelp>,
+        field_types: Vec<FieldTypeHelp>,
+        examples: Vec<ExampleUsage>,
+    },
+}
+
+/// Help information for an operation
+#[derive(Debug, Serialize)]
+pub struct OperationHelp {
+    pub name: String,
+    pub description: String,
+    pub required_params: Vec<String>,
+    pub optional_params: Vec<String>,
+}
+
+/// Help information for a category
+#[derive(Debug, Serialize)]
+pub struct CategoryHelp {
+    pub name: String,
+    pub description: String,
+    pub common_fields: Vec<String>,
+}
+
+/// Help information for field types
+#[derive(Debug, Serialize)]
+pub struct FieldTypeHelp {
+    pub field_type: String,
+    pub description: String,
+    pub examples: Vec<String>,
+}
+
+/// Example usage patterns
+#[derive(Debug, Serialize)]
+pub struct ExampleUsage {
+    pub operation: String,
+    pub description: String,
+    pub example: serde_json::Value,
 }
 
 /// Complete identity structure stored in Redis JSON

@@ -87,11 +87,22 @@ async def process_backlog():
 async def process_single_thought(client, embedding_service, message_id, fields):
     """Process a single thought for embedding"""
     try:
-        # Check if it's a thought event
-        if fields.get('event_type') != 'thought_created':
+        # Check if it's a thought event - handle both formats
+        event_type = fields.get('event_type')
+        thought_id = fields.get('thought_id')
+        
+        # Handle nested JSON format
+        if not event_type and 'data' in fields:
+            try:
+                data = json.loads(fields['data'])
+                event_type = data.get('type')
+                thought_id = data.get('thought_id')
+            except (json.JSONDecodeError, TypeError):
+                return True  # Skip malformed JSON
+        
+        if event_type != 'thought_created':
             return True  # Skip non-thought events
         
-        thought_id = fields.get('thought_id')
         if not thought_id:
             return True  # Skip malformed events
         
@@ -101,15 +112,28 @@ async def process_single_thought(client, embedding_service, message_id, fields):
         if exists:
             return True  # Skip if already has embedding
         
-        # Get thought content
+        # Get thought content - handle both string and JSON types
         thought_key = f"Claude:Thoughts:{thought_id}"
-        thought_data_str = await client.get(thought_key)
-        if not thought_data_str:
-            print(f"⚠️  Thought not found: {thought_id}")
-            return False
         
-        # Parse content
-        thought_data = json.loads(thought_data_str)
+        # Check what type the key is
+        key_type = await client.type(thought_key)
+        
+        if key_type == "string":
+            thought_data_str = await client.get(thought_key)
+            if not thought_data_str:
+                print(f"⚠️  Thought not found: {thought_id}")
+                return False
+            thought_data = json.loads(thought_data_str)
+        elif key_type == "ReJSON-RL":
+            # Use JSON.GET for RedisJSON
+            thought_data = await client.execute_command("JSON.GET", thought_key)
+            if not thought_data:
+                print(f"⚠️  Thought not found: {thought_id}")
+                return False
+            thought_data = json.loads(thought_data)
+        else:
+            print(f"⚠️  Unknown key type {key_type} for {thought_id}")
+            return False
         content = thought_data.get('thought', '')
         if not content:
             print(f"⚠️  Empty content: {thought_id}")

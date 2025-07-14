@@ -213,10 +213,13 @@ mod tests {
                 id: "test-1".to_string(),
                 instance: "test".to_string(),
                 thought: "Test thought".to_string(),
+                content: "Test thought".to_string(),
                 thought_number: 1,
                 total_thoughts: 1,
                 timestamp: "2025-01-01T00:00:00Z".to_string(),
                 chain_id: None,
+                next_thought_needed: false,
+                similarity: None,
             }
         ];
         

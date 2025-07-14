@@ -145,10 +145,14 @@ impl RedisManager {
         }
         
         // Create the index on JSON fields
+        // Updated to handle multiple instance prefixes with proper pattern
         let result: std::result::Result<String, _> = redis::cmd("FT.CREATE")
             .arg("idx:thoughts")
             .arg("ON").arg("JSON")
-            .arg("PREFIX").arg("1").arg("thought:")
+            .arg("PREFIX").arg("3")
+            .arg("Claude:Thoughts:")
+            .arg("CC:Thoughts:")
+            .arg("CCI:Thoughts:")
             .arg("SCHEMA")
             .arg("$.thought").arg("AS").arg("content").arg("TEXT")
             .arg("$.instance").arg("AS").arg("instance").arg("TAG")

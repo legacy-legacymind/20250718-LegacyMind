@@ -24,7 +24,7 @@ print("Request:", json.dumps(mcp_request))
 
 # Run with unified-think
 proc = subprocess.Popen(
-    ["./target/release/unified-think"],
+    ["./target/release/unified-intelligence"],
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,

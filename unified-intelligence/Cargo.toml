@@ -27,3 +27,6 @@ colored = "2.0"
 
 # [build-dependencies]
 # pyo3-build-config = { version = "0.21", features = ["resolve-config"] }
+
+[dev-dependencies]
+mockall = "0.12"

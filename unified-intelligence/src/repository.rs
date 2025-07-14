@@ -10,6 +10,7 @@ use crate::redisvl_service::RedisVLService;
 
 /// Repository trait for thought storage operations
 #[async_trait]
+#[cfg_attr(test, mockall::automock)]
 pub trait ThoughtRepository: Send + Sync {
     /// Store a thought record
     async fn save_thought(&self, thought: &ThoughtRecord) -> Result<()>;
@@ -34,10 +35,29 @@ pub trait ThoughtRepository: Send + Sync {
         instance: &str,
         query: &str,
         limit: usize,
+        threshold: f32,
     ) -> Result<Vec<ThoughtRecord>>;
     
     /// Get all thoughts for an instance
     async fn get_instance_thoughts(&self, instance: &str, limit: usize) -> Result<Vec<ThoughtRecord>>;
+    
+    /// Search thoughts across all instances by query
+    async fn search_thoughts_global(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ThoughtRecord>>;
+    
+    /// Search thoughts across all instances using semantic similarity
+    async fn search_thoughts_semantic_global(
+        &self,
+        query: &str,
+        limit: usize,
+        threshold: f32,
+    ) -> Result<Vec<ThoughtRecord>>;
+    
+    /// Get thoughts from all instances
+    async fn get_all_thoughts(&self, limit: usize) -> Result<Vec<ThoughtRecord>>;
     
     /// Create or update chain metadata
     async fn save_chain_metadata(&self, metadata: &ChainMetadata) -> Result<()>;
@@ -118,18 +138,69 @@ impl RedisThoughtRepository {
         
         let mut thoughts = Vec::new();
         for key in keys {
-            // Thoughts are stored as regular strings, not RedisJSON
-            if let Some(json_str) = self.redis.get(&key).await? {
-                if let Ok(thought) = serde_json::from_str::<ThoughtRecord>(&json_str) {
-                    if thought.thought.to_lowercase().contains(&query.to_lowercase()) {
-                        thoughts.push(thought);
-                        if thoughts.len() >= limit {
-                            break;
-                        }
+            // Try to get as JSON first, fallback to string
+            let json_str = match self.redis.json_get::<serde_json::Value>(&key, ".").await {
+                Ok(Some(json_val)) => {
+                    // Got JSON value, convert to string
+                    json_val.to_string()
+                }
+                _ => {
+                    // Fallback to regular string get
+                    match self.redis.get(&key).await? {
+                        Some(s) => s,
+                        None => continue,
+                    }
+                }
+            };
+            
+            if let Ok(thought) = serde_json::from_str::<ThoughtRecord>(&json_str) {
+                if thought.thought.to_lowercase().contains(&query.to_lowercase()) {
+                    thoughts.push(thought);
+                    if thoughts.len() >= limit {
+                        break;
                     }
                 }
             }
         }
+        
+        Ok(thoughts)
+    }
+    
+    async fn fallback_search_global(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ThoughtRecord>> {
+        // Search across all instances using wildcard pattern
+        let pattern = "*:Thoughts:*";
+        let keys = self.redis.scan_match(&pattern, 200).await?; // Get more keys since we're searching globally
+        
+        let mut thoughts = Vec::new();
+        for key in keys {
+            // Try to get as JSON first, fallback to string
+            let json_str = match self.redis.json_get::<serde_json::Value>(&key, ".").await {
+                Ok(Some(json_val)) => json_val.to_string(),
+                _ => {
+                    // Fallback to regular string get
+                    match self.redis.get(&key).await? {
+                        Some(s) => s,
+                        None => continue,
+                    }
+                }
+            };
+            
+            if let Ok(thought) = serde_json::from_str::<ThoughtRecord>(&json_str) {
+                if thought.thought.to_lowercase().contains(&query.to_lowercase()) {
+                    thoughts.push(thought);
+                    if thoughts.len() >= limit {
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Sort by timestamp (most recent first)
+        thoughts.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
         
         Ok(thoughts)
     }
@@ -306,11 +377,23 @@ impl ThoughtRepository for RedisThoughtRepository {
                 Ok(results) => {
                     let mut thoughts = Vec::new();
                     for (key, _score) in results {
-                        // Thoughts are stored as regular strings, not RedisJSON
-                        if let Some(json_str) = self.redis.get(&key).await? {
-                            if let Ok(thought) = serde_json::from_str::<ThoughtRecord>(&json_str) {
-                                thoughts.push(thought);
+                        // Try to get as JSON first, fallback to string
+                        let json_str = match self.redis.json_get::<serde_json::Value>(&key, ".").await {
+                            Ok(Some(json_val)) => {
+                                // Got JSON value, convert to string
+                                json_val.to_string()
                             }
+                            _ => {
+                                // Fallback to regular string get
+                                match self.redis.get(&key).await? {
+                                    Some(s) => s,
+                                    None => continue,
+                                }
+                            }
+                        };
+                        
+                        if let Ok(thought) = serde_json::from_str::<ThoughtRecord>(&json_str) {
+                            thoughts.push(thought);
                         }
                     }
                     thoughts
@@ -338,9 +421,10 @@ impl ThoughtRepository for RedisThoughtRepository {
         instance: &str,
         query: &str,
         limit: usize,
+        threshold: f32,
     ) -> Result<Vec<ThoughtRecord>> {
-        // Use RedisVL for semantic search with default threshold
-        let threshold = 0.7;
+        // Use RedisVL for semantic search with specified threshold
+        tracing::info!("Repository semantic search - instance: {}, query: {}, limit: {}, threshold: {}", instance, query, limit, threshold);
         self.vector_service.semantic_search(query, limit, threshold).await
     }
     
@@ -350,13 +434,131 @@ impl ThoughtRepository for RedisThoughtRepository {
         
         let mut thoughts = Vec::new();
         for key in keys.into_iter().take(limit) {
-            // Thoughts are stored as regular strings, not RedisJSON
-            if let Some(json_str) = self.redis.get(&key).await? {
-                if let Ok(thought) = serde_json::from_str::<ThoughtRecord>(&json_str) {
-                    thoughts.push(thought);
+            // Try to get as JSON first, fallback to string
+            let json_str = match self.redis.json_get::<serde_json::Value>(&key, ".").await {
+                Ok(Some(json_val)) => {
+                    // Got JSON value, convert to string
+                    json_val.to_string()
                 }
+                _ => {
+                    // Fallback to regular string get
+                    match self.redis.get(&key).await? {
+                        Some(s) => s,
+                        None => continue,
+                    }
+                }
+            };
+            
+            if let Ok(thought) = serde_json::from_str::<ThoughtRecord>(&json_str) {
+                thoughts.push(thought);
             }
         }
+        
+        Ok(thoughts)
+    }
+    
+    async fn search_thoughts_global(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ThoughtRecord>> {
+        // Create cache key for global search
+        let cache_key = format!("global_{}_{}", query, limit);
+        
+        // Check cache first
+        if let Ok(cache) = self.search_cache.lock() {
+            if let Some(cached_results) = cache.get(&cache_key) {
+                tracing::debug!("Cache hit for global search: {}", cache_key);
+                return Ok(cached_results.clone());
+            }
+        }
+        
+        tracing::debug!("Cache miss for global search: {}", cache_key);
+        
+        // Perform search across all instances
+        let thoughts = if self.search_available.load(std::sync::atomic::Ordering::SeqCst) {
+            // Search without instance filter to get results from all instances
+            let search_query = format!("(@content:{})", query);
+            
+            match self.redis.search_with_timeout("idx:thoughts", &search_query, limit).await {
+                Ok(results) => {
+                    tracing::info!("Global text search found {} results", results.len());
+                    let mut thoughts = Vec::new();
+                    for (key, _score) in results {
+                        // Try to get as JSON first, fallback to string
+                        let json_str = match self.redis.json_get::<serde_json::Value>(&key, ".").await {
+                            Ok(Some(json_val)) => json_val.to_string(),
+                            _ => {
+                                // Fallback to regular string get
+                                match self.redis.get(&key).await? {
+                                    Some(s) => s,
+                                    None => continue,
+                                }
+                            }
+                        };
+                        
+                        if let Ok(thought) = serde_json::from_str::<ThoughtRecord>(&json_str) {
+                            thoughts.push(thought);
+                        }
+                    }
+                    thoughts
+                }
+                Err(e) => {
+                    tracing::warn!("Global Redis search failed: {}, falling back to scan", e);
+                    self.fallback_search_global(query, limit).await?
+                }
+            }
+        } else {
+            self.fallback_search_global(query, limit).await?
+        };
+        
+        // Cache results
+        if let Ok(mut cache) = self.search_cache.lock() {
+            cache.insert(cache_key, thoughts.clone());
+        }
+        
+        Ok(thoughts)
+    }
+    
+    async fn search_thoughts_semantic_global(
+        &self,
+        query: &str,
+        limit: usize,
+        threshold: f32,
+    ) -> Result<Vec<ThoughtRecord>> {
+        tracing::info!("Global semantic search - query: '{}', limit: {}, threshold: {}", query, limit, threshold);
+        
+        // Use RedisVL service but with wildcard instance pattern
+        let redisvl_service = RedisVLService::new("*".to_string(), self.redis.clone());
+        redisvl_service.semantic_search(query, limit, threshold).await
+    }
+    
+    async fn get_all_thoughts(&self, limit: usize) -> Result<Vec<ThoughtRecord>> {
+        // Search for all thought keys across all instances
+        let pattern = "*:Thoughts:*";
+        let keys = self.redis.scan_match(pattern, limit * 2).await?; // Get more keys to ensure we have enough
+        
+        let mut thoughts = Vec::new();
+        for key in keys.into_iter().take(limit) {
+            // Try to get as JSON first, fallback to string
+            let json_str = match self.redis.json_get::<serde_json::Value>(&key, ".").await {
+                Ok(Some(json_val)) => json_val.to_string(),
+                _ => {
+                    // Fallback to regular string get
+                    match self.redis.get(&key).await? {
+                        Some(s) => s,
+                        None => continue,
+                    }
+                }
+            };
+            
+            if let Ok(thought) = serde_json::from_str::<ThoughtRecord>(&json_str) {
+                thoughts.push(thought);
+            }
+        }
+        
+        // Sort by timestamp (most recent first)
+        thoughts.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
         
         Ok(thoughts)
     }

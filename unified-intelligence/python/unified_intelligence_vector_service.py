@@ -81,7 +81,7 @@ class UnifiedIntelligenceVectorService:
         # Store with RedisVL - handles all Redis operations
         self.thought_index.load([doc])
         
-    async def semantic_search(self, query: str, limit: int = 10, threshold: float = 0.7) -> list:
+    async def semantic_search(self, query: str, limit: int = 10, threshold: float = 0.5) -> list:
         """Semantic search with caching"""
         # Check cache first - SemanticCache.check is synchronous
         cached_result = self.query_cache.check(query)

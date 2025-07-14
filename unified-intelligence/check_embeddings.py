@@ -38,7 +38,7 @@ async def check_embeddings():
                 service = SimpleEmbeddingService(sync_redis_url, api_key, "Claude")
                 
                 print("\nTesting semantic search...")
-                results = service.semantic_search("Redis", limit=3, threshold=0.7)
+                results = service.semantic_search("Redis", limit=3, threshold=0.5)
                 print(f"Search results: {len(results)}")
                 for result in results[:3]:
                     print(f"  {result['thought_id']}: {result['similarity']:.3f}")
