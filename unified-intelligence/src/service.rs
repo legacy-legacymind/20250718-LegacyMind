@@ -9,7 +9,7 @@ use rmcp_macros::{tool, tool_handler, tool_router};
 use tracing;
 
 use crate::error::UnifiedIntelligenceError;
-use crate::models::{UiThinkParams, UiRecallParams, UiIdentityParams, UiDebugEnvParams};
+use crate::models::{UiThinkParams, UiRecallParams, UiRecallFeedbackParams, UiIdentityParams, UiDebugEnvParams};
 use crate::redis::RedisManager;
 use crate::repository::RedisThoughtRepository;
 use crate::handlers::ToolHandlers;
@@ -146,6 +146,33 @@ impl UnifiedIntelligenceService {
             },
             Err(e) => {
                 tracing::error!("ui_recall error: {}", e);
+                Err(ErrorData::internal_error(e.to_string(), None))
+            }
+        }
+    }
+    
+    #[tool(description = "Record feedback on search results to improve future searches")]
+    pub async fn ui_recall_feedback(
+        &self,
+        params: Parameters<UiRecallFeedbackParams>,
+    ) -> std::result::Result<CallToolResult, ErrorData> {
+        // Check rate limit
+        if let Err(e) = self.rate_limiter.check_rate_limit(&self.instance_id).await {
+            tracing::warn!("Rate limit hit for instance {}: {}", self.instance_id, e);
+            return Err(ErrorData::invalid_params(
+                format!("Rate limit exceeded. Please slow down your requests."), 
+                None
+            ));
+        }
+        
+        match self.handlers.ui_recall_feedback(params.0).await {
+            Ok(response) => {
+                let content = Content::json(response)
+                    .map_err(|e| ErrorData::internal_error(format!("Failed to create JSON content: {}", e), None))?;
+                Ok(CallToolResult::success(vec![content]))
+            },
+            Err(e) => {
+                tracing::error!("ui_recall_feedback error: {}", e);
                 Err(ErrorData::internal_error(e.to_string(), None))
             }
         }

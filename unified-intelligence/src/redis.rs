@@ -262,6 +262,116 @@ impl RedisManager {
         Ok(conn.zrange(key, start, stop).await?)
     }
     
+    /// Add member to a set
+    pub async fn sadd(&self, key: &str, member: &str) -> Result<()> {
+        let mut conn = self.get_connection().await?;
+        conn.sadd(key, member).await?;
+        Ok(())
+    }
+    
+    // ===== BOOST SCORE METHODS (Phase 3) =====
+    
+    /// Increment score in sorted set (for boost scores)
+    pub async fn zincrby(&self, key: &str, member: &str, increment: f64) -> Result<f64> {
+        let mut conn = self.get_connection().await?;
+        
+        // Use Redis ZINCRBY command manually
+        let mut cmd = redis::cmd("ZINCRBY");
+        cmd.arg(key).arg(increment).arg(member);
+        
+        let new_score: f64 = cmd.query_async(&mut *conn).await?;
+        Ok(new_score)
+    }
+    
+    /// Get score of member in sorted set
+    pub async fn zscore(&self, key: &str, member: &str) -> Result<Option<f64>> {
+        let mut conn = self.get_connection().await?;
+        let score: Option<f64> = conn.zscore(key, member).await?;
+        Ok(score)
+    }
+    
+    /// Get members of sorted set with scores in descending order
+    pub async fn zrevrange_withscores(&self, key: &str, start: isize, stop: isize) -> Result<Vec<(String, f64)>> {
+        let mut conn = self.get_connection().await?;
+        let mut cmd = redis::cmd("ZREVRANGE");
+        cmd.arg(key).arg(start).arg(stop).arg("WITHSCORES");
+        
+        let results: Vec<String> = cmd.query_async(&mut *conn).await?;
+        
+        // Parse alternating member, score pairs
+        let mut scored_members = Vec::new();
+        for chunk in results.chunks(2) {
+            if let [member, score_str] = chunk {
+                if let Ok(score) = score_str.parse::<f64>() {
+                    scored_members.push((member.clone(), score));
+                }
+            }
+        }
+        
+        Ok(scored_members)
+    }
+    
+    /// Get members within score range (for boost score filtering)
+    pub async fn zrangebyscore(&self, key: &str, min_score: f64, max_score: f64) -> Result<Vec<String>> {
+        let mut conn = self.get_connection().await?;
+        let mut cmd = redis::cmd("ZRANGEBYSCORE");
+        cmd.arg(key).arg(min_score).arg(max_score);
+        
+        let results: Vec<String> = cmd.query_async(&mut *conn).await?;
+        Ok(results)
+    }
+    
+    /// Add entry to Redis Stream
+    pub async fn xadd(&self, key: &str, id: &str, fields: Vec<(&str, &str)>) -> Result<String> {
+        let mut conn = self.get_connection().await?;
+        
+        // Build the XADD command
+        let mut cmd = redis::cmd("XADD");
+        cmd.arg(key).arg(id);
+        
+        // Add field-value pairs
+        for (field, value) in fields {
+            cmd.arg(field).arg(value);
+        }
+        
+        let result: String = cmd.query_async(&mut *conn).await?;
+        Ok(result)
+    }
+    
+    /// Get intersection of multiple sets (SINTER)
+    pub async fn sinter(&self, keys: &[String]) -> Result<Vec<String>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        let mut conn = self.get_connection().await?;
+        
+        let mut cmd = redis::cmd("SINTER");
+        for key in keys {
+            cmd.arg(key);
+        }
+        
+        let result: Vec<String> = cmd.query_async(&mut *conn).await?;
+        Ok(result)
+    }
+    
+    /// Get union of multiple sets (SUNION)
+    pub async fn sunion(&self, keys: &[String]) -> Result<Vec<String>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        let mut conn = self.get_connection().await?;
+        
+        let mut cmd = redis::cmd("SUNION");
+        for key in keys {
+            cmd.arg(key);
+        }
+        
+        let result: Vec<String> = cmd.query_async(&mut *conn).await?;
+        Ok(result)
+    }
+    
     /// Execute a Redis search query
     pub async fn search(
         &self,

@@ -6,7 +6,8 @@ use crate::error::{Result, UnifiedIntelligenceError};
 use crate::models::{
     UiThinkParams, UiRecallParams, UiIdentityParams, UiDebugEnvParams, ThoughtRecord, ThinkResponse, 
     RecallResponse, ChainMetadata, IdentityResponse, IdentityOperation, Identity, DebugEnvResponse,
-    OperationHelp, CategoryHelp, FieldTypeHelp, ExampleUsage
+    OperationHelp, CategoryHelp, FieldTypeHelp, ExampleUsage, ThoughtMetadata, UiRecallFeedbackParams,
+    FeedbackResponse
 };
 use crate::repository::ThoughtRepository;
 use crate::search_optimization::SearchCache;
@@ -121,6 +122,39 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         // Save thought
         self.repository.save_thought(&thought).await?;
         
+        // Save metadata if any new fields are provided (Phase 1 feedback loop implementation)
+        if params.importance.is_some() || params.relevance.is_some() || 
+           params.tags.is_some() || params.category.is_some() {
+            let metadata = ThoughtMetadata::new(
+                thought_id.clone(),
+                self.instance_id.clone(),
+                params.importance,
+                params.relevance,
+                params.tags.clone(),
+                params.category.clone(),
+            );
+            
+            // Store metadata in Redis using pattern: {instance}:thought_meta:{id}
+            self.repository.save_thought_metadata(&metadata).await?;
+            
+            // Publish metadata event to feedback stream for background processing
+            self.repository.publish_feedback_event(&json!({
+                "event_type": "thought_created",
+                "thought_id": thought_id,
+                "instance": self.instance_id,
+                "metadata": {
+                    "importance": params.importance,
+                    "relevance": params.relevance,
+                    "tags": params.tags,
+                    "category": params.category,
+                },
+                "timestamp": metadata.created_at,
+            })).await?;
+            
+            tracing::info!("Saved metadata for thought {} with importance: {:?}, relevance: {:?}, tags: {:?}, category: {:?}", 
+                thought_id, params.importance, params.relevance, params.tags, params.category);
+        }
+        
         // Display success and completion status
         self.visual.thought_stored(&thought_id);
         
@@ -140,15 +174,24 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         })
     }
     
-    /// Handle ui_recall tool
+    /// Handle ui_recall tool (Phase 2 Enhanced)
     pub async fn ui_recall(&self, params: UiRecallParams) -> Result<RecallResponse> {
         let action = params.action.as_deref().unwrap_or("search");
         let limit = params.limit.unwrap_or(50);
         
+        // Generate search ID for tracking (Phase 2 feature)
+        let search_id = self.repository.generate_search_id().await?;
+        
         tracing::info!(
-            "Recall action '{}' for instance '{}' with query: {:?}, chain: {:?}",
-            action, self.instance_id, params.query, params.chain_id
+            "Recall action '{}' for instance '{}' with query: {:?}, chain: {:?}, search_id: {}",
+            action, self.instance_id, params.query, params.chain_id, search_id
         );
+        
+        // Check if any Phase 2 metadata filters are applied
+        let has_metadata_filters = params.tags_filter.is_some() || 
+            params.min_importance.is_some() || 
+            params.min_relevance.is_some() || 
+            params.category_filter.is_some();
         
         // Get thoughts based on query or chain_id
         let thoughts = if let Some(chain_id) = &params.chain_id {
@@ -159,22 +202,64 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             if params.semantic_search.unwrap_or(false) {
                 // Use semantic search via repository with configurable threshold
                 let threshold = params.threshold.unwrap_or(0.5); // Standardized threshold for improved embedding quality
-                tracing::info!("Handler semantic search - threshold: {}, global: {}", threshold, search_all_instances);
+                tracing::info!("Handler semantic search - threshold: {}, global: {}, enhanced: {}", 
+                    threshold, search_all_instances, has_metadata_filters);
                 
-                if search_all_instances {
-                    self.repository.search_thoughts_semantic_global(query, limit, threshold).await?
+                // Use enhanced search methods if metadata filters are provided (Phase 2)
+                if has_metadata_filters {
+                    if search_all_instances {
+                        self.repository.search_thoughts_semantic_global_enhanced(
+                            query, 
+                            limit, 
+                            threshold,
+                            params.tags_filter.clone(),
+                            params.min_importance,
+                            params.min_relevance,
+                            params.category_filter.clone(),
+                        ).await?
+                    } else {
+                        self.repository.search_thoughts_semantic_enhanced(
+                            &self.instance_id,
+                            query, 
+                            limit, 
+                            threshold,
+                            params.tags_filter.clone(),
+                            params.min_importance,
+                            params.min_relevance,
+                            params.category_filter.clone(),
+                        ).await?
+                    }
                 } else {
-                    self.repository.search_thoughts_semantic(&self.instance_id, query, limit, threshold).await?
+                    // Use standard semantic search
+                    let mut thoughts = if search_all_instances {
+                        self.repository.search_thoughts_semantic_global(query, limit, threshold).await?
+                    } else {
+                        self.repository.search_thoughts_semantic(&self.instance_id, query, limit, threshold).await?
+                    };
+                    
+                    // Apply boost scores to improve ranking (Phase 3)
+                    if !search_all_instances {
+                        self.repository.apply_boost_scores(&self.instance_id, &mut thoughts).await?;
+                    }
+                    
+                    thoughts
                 }
             } else {
-                // Use regular text search
+                // Use regular text search (Phase 2 filters not supported for text search yet)
                 tracing::info!("Handler text search - global: {}", search_all_instances);
                 
-                if search_all_instances {
+                let mut thoughts = if search_all_instances {
                     self.repository.search_thoughts_global(query, limit).await?
                 } else {
                     self.repository.search_thoughts(&self.instance_id, query, limit).await?
+                };
+                
+                // Apply boost scores to text search results too (Phase 3)
+                if !search_all_instances {
+                    self.repository.apply_boost_scores(&self.instance_id, &mut thoughts).await?;
                 }
+                
+                thoughts
             }
         } else {
             let search_all_instances = params.search_all_instances.unwrap_or(false);
@@ -234,11 +319,38 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             _ => (None, thoughts), // Default search action
         };
         
+        // Publish search performed event for background analysis (Phase 2)
+        if params.query.is_some() {
+            let search_event = json!({
+                "event_type": "search_performed",
+                "search_id": search_id,
+                "instance": self.instance_id,
+                "query": params.query,
+                "semantic_search": params.semantic_search.unwrap_or(false),
+                "enhanced_filters": has_metadata_filters,
+                "tags_filter": params.tags_filter,
+                "min_importance": params.min_importance,
+                "min_relevance": params.min_relevance,
+                "category_filter": params.category_filter,
+                "results_count": final_thoughts.len(),
+                "total_found": total_found,
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+            });
+            
+            if let Err(e) = self.repository.publish_feedback_event(&search_event).await {
+                tracing::warn!("Failed to publish search event: {}", e);
+            }
+        }
+
         Ok(RecallResponse {
             thoughts: final_thoughts,
             total_found,
             search_method: if params.semantic_search.unwrap_or(false) {
-                "semantic_vector_search".to_string()
+                if has_metadata_filters {
+                    "enhanced_semantic_search".to_string()
+                } else {
+                    "semantic_vector_search".to_string()
+                }
             } else if self.search_available.load(std::sync::atomic::Ordering::SeqCst) {
                 "redis_search".to_string()
             } else {
@@ -247,6 +359,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             search_available: self.search_available.load(std::sync::atomic::Ordering::SeqCst),
             action: Some(action.to_string()),
             action_result,
+            search_id, // Phase 2 enhancement
         })
     }
     
@@ -940,6 +1053,60 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             openai_api_key: masked_openai_key,
             redis_password: masked_redis_password,
             instance_id,
+        })
+    }
+    
+    /// Handle ui_recall_feedback tool - record feedback on search results (Phase 2)
+    pub async fn ui_recall_feedback(&self, params: UiRecallFeedbackParams) -> Result<FeedbackResponse> {
+        tracing::info!(
+            "Recording feedback for search '{}', thought '{}', action '{}' for instance '{}'",
+            params.search_id, params.thought_id, params.action, self.instance_id
+        );
+        
+        // Validate action parameter
+        match params.action.as_str() {
+            "viewed" | "used" | "irrelevant" | "helpful" => {},
+            _ => {
+                return Err(UnifiedIntelligenceError::Validation {
+                    field: "action".to_string(),
+                    reason: "Action must be one of: 'viewed', 'used', 'irrelevant', 'helpful'".to_string(),
+                });
+            }
+        }
+        
+        // Validate dwell_time if provided
+        if let Some(dwell_time) = params.dwell_time {
+            if dwell_time < 0 {
+                return Err(UnifiedIntelligenceError::Validation {
+                    field: "dwell_time".to_string(),
+                    reason: "Dwell time must be positive".to_string(),
+                });
+            }
+        }
+        
+        // Validate relevance_rating if provided
+        if let Some(rating) = params.relevance_rating {
+            if rating < 1 || rating > 10 {
+                return Err(UnifiedIntelligenceError::Validation {
+                    field: "relevance_rating".to_string(),
+                    reason: "Relevance rating must be between 1 and 10".to_string(),
+                });
+            }
+        }
+        
+        // Record feedback via repository
+        self.repository.record_feedback(&params, &self.instance_id).await?;
+        
+        let recorded_at = chrono::Utc::now().to_rfc3339();
+        
+        tracing::info!("Successfully recorded feedback for search {} thought {}", 
+            params.search_id, params.thought_id);
+        
+        Ok(FeedbackResponse {
+            status: "recorded".to_string(),
+            search_id: params.search_id,
+            thought_id: params.thought_id,
+            recorded_at,
         })
     }
 }

@@ -22,6 +22,19 @@ pub struct UiThinkParams {
     
     #[schemars(description = "Optional thinking framework: 'ooda', 'socratic', 'first_principles', 'systems', 'root_cause', 'swot'")]
     pub framework: Option<String>,
+    
+    // NEW METADATA FIELDS FOR FEEDBACK LOOP SYSTEM
+    #[schemars(description = "Importance score from 1-10 scale")]
+    pub importance: Option<i32>,
+    
+    #[schemars(description = "Relevance score from 1-10 scale (to current task)")]
+    pub relevance: Option<i32>,
+    
+    #[schemars(description = "Tags for categorization (e.g., ['architecture', 'redis', 'critical'])")]
+    pub tags: Option<Vec<String>>,
+    
+    #[schemars(description = "Category: 'technical', 'strategic', 'operational', or 'relationship'")]
+    pub category: Option<String>,
 }
 
 /// Parameters for the ui_recall tool
@@ -50,6 +63,38 @@ pub struct UiRecallParams {
     
     #[schemars(description = "Search across all instances instead of just current instance (default: false)")]
     pub search_all_instances: Option<bool>,
+    
+    // PHASE 2 FEEDBACK LOOP ENHANCEMENTS
+    #[schemars(description = "Filter results by tags (e.g., ['redis', 'architecture'])")]
+    pub tags_filter: Option<Vec<String>>,
+    
+    #[schemars(description = "Minimum importance score (1-10 scale)")]
+    pub min_importance: Option<i32>,
+    
+    #[schemars(description = "Minimum relevance score (1-10 scale)")]
+    pub min_relevance: Option<i32>,
+    
+    #[schemars(description = "Filter by category: 'technical', 'strategic', 'operational', 'relationship'")]
+    pub category_filter: Option<String>,
+}
+
+/// Parameters for the ui_recall_feedback tool (Phase 2)
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct UiRecallFeedbackParams {
+    #[schemars(description = "Search session ID from ui_recall response")]
+    pub search_id: String,
+    
+    #[schemars(description = "ID of the thought being given feedback on")]
+    pub thought_id: String,
+    
+    #[schemars(description = "Action taken: 'viewed', 'used', 'irrelevant', 'helpful'")]
+    pub action: String,
+    
+    #[schemars(description = "Time spent viewing the thought in seconds")]
+    pub dwell_time: Option<i32>,
+    
+    #[schemars(description = "Optional explicit relevance rating (1-10)")]
+    pub relevance_rating: Option<i32>,
 }
 
 /// Core thought record structure stored in Redis
@@ -92,6 +137,39 @@ impl ThoughtRecord {
     }
 }
 
+/// Metadata for thoughts stored separately in Redis for feedback loop system
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ThoughtMetadata {
+    pub thought_id: String,
+    pub instance: String,
+    pub importance: Option<i32>,
+    pub relevance: Option<i32>,
+    pub tags: Option<Vec<String>>,
+    pub category: Option<String>,
+    pub created_at: String,
+}
+
+impl ThoughtMetadata {
+    pub fn new(
+        thought_id: String,
+        instance: String,
+        importance: Option<i32>,
+        relevance: Option<i32>,
+        tags: Option<Vec<String>>,
+        category: Option<String>,
+    ) -> Self {
+        Self {
+            thought_id,
+            instance,
+            importance,
+            relevance,
+            tags,
+            category,
+            created_at: Utc::now().to_rfc3339(),
+        }
+    }
+}
+
 /// Response from ui_think tool
 #[derive(Debug, Serialize)]
 pub struct ThinkResponse {
@@ -109,6 +187,17 @@ pub struct RecallResponse {
     pub search_available: bool,
     pub action: Option<String>,
     pub action_result: Option<serde_json::Value>,
+    // PHASE 2 FEEDBACK LOOP ENHANCEMENT
+    pub search_id: String,  // For tracking this search session
+}
+
+/// Response from ui_recall_feedback tool  
+#[derive(Debug, Serialize)]
+pub struct FeedbackResponse {
+    pub status: String,
+    pub search_id: String,
+    pub thought_id: String,
+    pub recorded_at: String,
 }
 
 /// Chain metadata stored in Redis
