@@ -1,6 +1,6 @@
 #!/bin/bash
 # Quick Ollama wrapper for Claude to delegate tasks
-OLLAMA_BIN="/Applications/Ollama.app/Contents/Resources/ollama"
+OLLAMA_BIN="/usr/local/bin/ollama"
 MODEL="${OLLAMA_MODEL:-qwen2.5-coder:1.5b}"
 
 # Usage: ./ollama-quick.sh "prompt"
