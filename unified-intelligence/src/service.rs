@@ -46,8 +46,8 @@ impl UnifiedIntelligenceService {
             tracing::warn!("OPENAI_API_KEY not found in environment");
         }
         
-        // Initialize Bloom filter for this instance
-        redis_manager.init_bloom_filter(&instance_id).await?;
+        // Initialize Bloom filter for this instance - DISABLED (requires RedisBloom)
+        // redis_manager.init_bloom_filter(&instance_id).await?;
         
         // Initialize event stream for this instance
         redis_manager.init_event_stream(&instance_id).await?;

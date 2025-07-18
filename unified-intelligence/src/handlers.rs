@@ -7,20 +7,23 @@ use crate::models::{
     UiThinkParams, UiRecallParams, UiIdentityParams, UiDebugEnvParams, ThoughtRecord, ThinkResponse, 
     RecallResponse, ChainMetadata, IdentityResponse, IdentityOperation, Identity, DebugEnvResponse,
     OperationHelp, CategoryHelp, FieldTypeHelp, ExampleUsage, ThoughtMetadata, UiRecallFeedbackParams,
-    FeedbackResponse
+    FeedbackResponse, MindMonitorStatusParams, MindMonitorStatusResponse, MindCognitiveMetricsParams,
+    MindCognitiveMetricsResponse, MindInterventionQueueParams, MindInterventionQueueResponse,
+    InterventionDetail, MindConversationInsightsParams, MindConversationInsightsResponse,
+    MindEntityTrackingParams, MindEntityTrackingResponse, TrackedEntity
 };
 use crate::repository::ThoughtRepository;
 use crate::search_optimization::SearchCache;
 use crate::validation::InputValidator;
 use crate::visual::VisualOutput;
-use crate::frameworks::{ThinkingFramework, FrameworkProcessor, FrameworkVisual, FrameworkError};
+use crate::frameworks::{ThinkingFramework, FrameworkProcessor, FrameworkVisual};
 
 /// Handler for MCP tool operations
 pub struct ToolHandlers<R: ThoughtRepository> {
     repository: Arc<R>,
     instance_id: String,
     validator: Arc<InputValidator>,
-    search_cache: Arc<std::sync::Mutex<SearchCache>>,
+    _search_cache: Arc<std::sync::Mutex<SearchCache>>,
     search_available: Arc<std::sync::atomic::AtomicBool>,
     visual: VisualOutput,
 }
@@ -37,7 +40,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             repository,
             instance_id,
             validator,
-            search_cache,
+            _search_cache: search_cache,
             search_available,
             visual: VisualOutput::new(),
         }
@@ -62,7 +65,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         };
 
         // Display visual start with framework
-        self.visual.thought_start(params.thought_number, params.total_thoughts);
+        self.visual.thought_start(params.thought_number, params.total_thoughts, &self.instance_id);
         FrameworkVisual::display_framework_start(&framework);
         self.visual.thought_content(&params.thought);
         
@@ -156,7 +159,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         }
         
         // Display success and completion status
-        self.visual.thought_stored(&thought_id);
+        self.visual.thought_stored(&thought_id, &self.instance_id);
         
         if !params.next_thought_needed {
             self.visual.thinking_complete();
@@ -1107,6 +1110,256 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             search_id: params.search_id,
             thought_id: params.thought_id,
             recorded_at,
+        })
+    }
+    
+    /// Handle mind_monitor_status tool - Get current monitoring status and metrics
+    pub async fn mind_monitor_status(&self, params: MindMonitorStatusParams) -> Result<MindMonitorStatusResponse> {
+        tracing::info!("Monitoring status request for instance '{}', detailed: {:?}", 
+            self.instance_id, params.detailed);
+        
+        // TODO: This would integrate with UnifiedMind service
+        // For now, return mock monitoring data based on repository state
+        
+        // Get some basic metrics from repository
+        let thoughts_count = self.repository.get_instance_thoughts(&self.instance_id, 1000).await?.len();
+        
+        let detailed_metrics = if params.detailed.unwrap_or(false) {
+            Some(json!({
+                "thought_processing": {
+                    "total_thoughts": thoughts_count,
+                    "recent_thoughts": thoughts_count.min(10),
+                    "chains_active": 5,
+                },
+                "performance": {
+                    "avg_response_time_ms": 120,
+                    "cache_hit_rate": 0.85,
+                    "embedding_success_rate": 0.92,
+                },
+                "resources": {
+                    "memory_usage_mb": 256,
+                    "redis_connections": 5,
+                    "background_tasks": 3,
+                }
+            }))
+        } else {
+            None
+        };
+        
+        Ok(MindMonitorStatusResponse {
+            status: "active".to_string(),
+            uptime_seconds: 3600, // Mock 1 hour uptime
+            thoughts_processed: thoughts_count,
+            interventions_pending: 0,
+            current_cognitive_load: 0.65,
+            monitoring_enabled: true,
+            detailed_metrics,
+        })
+    }
+    
+    /// Handle mind_cognitive_metrics tool - Get cognitive pattern metrics and insights
+    pub async fn mind_cognitive_metrics(&self, params: MindCognitiveMetricsParams) -> Result<MindCognitiveMetricsResponse> {
+        let window = params.window.as_deref().unwrap_or("recent");
+        
+        tracing::info!("Cognitive metrics request for instance '{}', window: {}", 
+            self.instance_id, window);
+        
+        // TODO: Integrate with UnifiedMind service for real cognitive metrics
+        // For now, return mock metrics based on thought patterns
+        
+        let trends = if params.include_trends.unwrap_or(false) {
+            Some(json!({
+                "cognitive_load_trend": "decreasing",
+                "pattern_recognition_improvement": 0.12,
+                "learning_acceleration": 0.08,
+                "focus_stability": "improving",
+            }))
+        } else {
+            None
+        };
+        
+        Ok(MindCognitiveMetricsResponse {
+            cognitive_load: 0.65,
+            pattern_recognition_rate: 0.78,
+            learning_velocity: 0.82,
+            focus_level: 0.9,
+            confidence: 0.85,
+            thinking_velocity: 0.75,
+            uncertainty_level: 0.15,
+            cognitive_fatigue: 0.25,
+            context_switches: 12,
+            working_memory_usage: 0.7,
+            trends,
+        })
+    }
+    
+    /// Handle mind_intervention_queue tool - Get pending interventions and queue status
+    pub async fn mind_intervention_queue(&self, params: MindInterventionQueueParams) -> Result<MindInterventionQueueResponse> {
+        let limit = params.limit.unwrap_or(10);
+        
+        tracing::info!("Intervention queue request for instance '{}', priority: {:?}, limit: {}", 
+            self.instance_id, params.priority, limit);
+        
+        // TODO: Integrate with UnifiedMind service for real intervention queue
+        // For now, return empty queue or mock interventions
+        
+        let interventions = vec![];
+        
+        let priority_breakdown = json!({
+            "urgent": 0,
+            "high": 0,
+            "normal": 0,
+            "low": 0,
+        });
+        
+        Ok(MindInterventionQueueResponse {
+            interventions,
+            total_pending: 0,
+            priority_breakdown,
+        })
+    }
+    
+    /// Handle mind_conversation_insights tool - Get insights about conversation patterns
+    pub async fn mind_conversation_insights(&self, params: MindConversationInsightsParams) -> Result<MindConversationInsightsResponse> {
+        let session_id = params.session_id.unwrap_or_else(|| format!("session-{}", uuid::Uuid::new_v4()));
+        
+        tracing::info!("Conversation insights request for instance '{}', session: {}", 
+            self.instance_id, session_id);
+        
+        // TODO: Integrate with UnifiedMind service for real conversation analysis
+        // For now, analyze thought patterns in current instance
+        
+        let thoughts = self.repository.get_instance_thoughts(&self.instance_id, 50).await?;
+        let message_count = thoughts.len();
+        
+        // Extract topics from thoughts
+        let mut word_freq = std::collections::HashMap::new();
+        for thought in &thoughts {
+            for word in thought.thought.split_whitespace() {
+                if word.len() > 4 { // Only consider longer words as potential topics
+                    *word_freq.entry(word.to_lowercase()).or_insert(0) += 1;
+                }
+            }
+        }
+        
+        let mut topics: Vec<_> = word_freq.into_iter()
+            .filter(|(_, count)| *count > 2)
+            .map(|(word, _)| word)
+            .collect();
+        topics.truncate(5);
+        
+        let key_entities = if params.include_entities.unwrap_or(true) {
+            vec![
+                json!({
+                    "text": self.instance_id.clone(),
+                    "type": "instance",
+                    "confidence": 1.0,
+                    "importance": 0.9,
+                }),
+            ]
+        } else {
+            vec![]
+        };
+        
+        Ok(MindConversationInsightsResponse {
+            session_id,
+            message_count,
+            conversation_state: "focused".to_string(),
+            detected_topics: topics,
+            key_entities,
+            flow_patterns: vec!["sequential".to_string(), "exploratory".to_string()],
+            insights: vec![
+                "Conversation is focused on technical implementation".to_string(),
+                "High engagement with thought chains".to_string(),
+            ],
+        })
+    }
+    
+    /// Handle mind_entity_tracking tool - Get detected entities and their importance
+    pub async fn mind_entity_tracking(&self, params: MindEntityTrackingParams) -> Result<MindEntityTrackingResponse> {
+        let min_confidence = params.min_confidence.unwrap_or(0.5);
+        
+        tracing::info!("Entity tracking request for instance '{}', type: {:?}, min_confidence: {}", 
+            self.instance_id, params.entity_type, min_confidence);
+        
+        // TODO: Integrate with UnifiedMind service for real entity detection
+        // For now, extract basic entities from recent thoughts
+        
+        let thoughts = self.repository.get_instance_thoughts(&self.instance_id, 100).await?;
+        
+        // Simple entity extraction
+        let mut entities = vec![];
+        
+        // Always include instance as an entity
+        entities.push(TrackedEntity {
+            text: self.instance_id.clone(),
+            entity_type: "instance".to_string(),
+            confidence: 1.0,
+            context: "Current active instance".to_string(),
+            occurrences: thoughts.len(),
+            importance_score: 0.95,
+            metadata: Some(json!({"source": "system"})),
+        });
+        
+        // Look for file paths
+        for thought in &thoughts {
+            if thought.thought.contains('/') && thought.thought.contains('.') {
+                // Simple heuristic for file paths
+                for word in thought.thought.split_whitespace() {
+                    if word.contains('/') && word.len() > 5 {
+                        entities.push(TrackedEntity {
+                            text: word.to_string(),
+                            entity_type: "filepath".to_string(),
+                            confidence: 0.8,
+                            context: thought.thought.chars().take(100).collect(),
+                            occurrences: 1,
+                            importance_score: 0.6,
+                            metadata: None,
+                        });
+                    }
+                }
+            }
+        }
+        
+        // Filter by entity type if specified
+        if let Some(entity_type) = &params.entity_type {
+            entities.retain(|e| e.entity_type == *entity_type);
+        }
+        
+        // Filter by confidence
+        entities.retain(|e| e.confidence >= min_confidence);
+        
+        let total_detected = entities.len();
+        
+        // Sort by importance
+        entities.sort_by(|a, b| b.importance_score.partial_cmp(&a.importance_score).unwrap_or(std::cmp::Ordering::Equal));
+        
+        let importance_ranking = entities.iter()
+            .take(5)
+            .map(|e| json!({
+                "entity": e.text.clone(),
+                "type": e.entity_type.clone(),
+                "importance": e.importance_score,
+            }))
+            .collect();
+        
+        let enrichment_suggestions = if params.include_enrichment.unwrap_or(false) {
+            Some(vec![
+                json!({
+                    "entity": self.instance_id.clone(),
+                    "suggestion": "Add role description to identity",
+                    "confidence": 0.9,
+                }),
+            ])
+        } else {
+            None
+        };
+        
+        Ok(MindEntityTrackingResponse {
+            entities,
+            total_detected,
+            importance_ranking,
+            enrichment_suggestions,
         })
     }
 }

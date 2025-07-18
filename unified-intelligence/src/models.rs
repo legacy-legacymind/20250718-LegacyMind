@@ -244,12 +244,142 @@ pub struct UiDebugEnvParams {
     // No parameters needed for this tool
 }
 
+/// Parameters for the mind_monitor_status tool
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MindMonitorStatusParams {
+    #[schemars(description = "Include detailed metrics breakdown (default: false)")]
+    pub detailed: Option<bool>,
+}
+
+/// Parameters for the mind_cognitive_metrics tool
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MindCognitiveMetricsParams {
+    #[schemars(description = "Time window to aggregate metrics: 'recent', 'session', 'all' (default: 'recent')")]
+    pub window: Option<String>,
+    
+    #[schemars(description = "Include historical trends (default: false)")]
+    pub include_trends: Option<bool>,
+}
+
+/// Parameters for the mind_intervention_queue tool
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MindInterventionQueueParams {
+    #[schemars(description = "Filter by priority: 'low', 'normal', 'high', 'urgent' (optional)")]
+    pub priority: Option<String>,
+    
+    #[schemars(description = "Maximum number of interventions to return (default: 10)")]
+    pub limit: Option<usize>,
+}
+
+/// Parameters for the mind_conversation_insights tool
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MindConversationInsightsParams {
+    #[schemars(description = "Session ID to analyze (optional, defaults to current session)")]
+    pub session_id: Option<String>,
+    
+    #[schemars(description = "Include entity analysis (default: true)")]
+    pub include_entities: Option<bool>,
+}
+
+/// Parameters for the mind_entity_tracking tool  
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct MindEntityTrackingParams {
+    #[schemars(description = "Entity type filter: 'system', 'instance', 'filepath', 'function', 'error', 'configuration', 'command', 'concept', 'tool' (optional)")]
+    pub entity_type: Option<String>,
+    
+    #[schemars(description = "Minimum confidence threshold (0.0-1.0, default: 0.5)")]
+    pub min_confidence: Option<f32>,
+    
+    #[schemars(description = "Include enrichment suggestions (default: false)")]
+    pub include_enrichment: Option<bool>,
+}
+
 /// Response from ui_debug_env tool
 #[derive(Debug, Serialize)]
 pub struct DebugEnvResponse {
     pub openai_api_key: String,    // Masked value
     pub redis_password: String,    // Masked value
     pub instance_id: Option<String>, // Full value shown
+}
+
+/// Response from mind_monitor_status tool
+#[derive(Debug, Serialize)]
+pub struct MindMonitorStatusResponse {
+    pub status: String,                // "active", "starting", "stopped"
+    pub uptime_seconds: u64,
+    pub thoughts_processed: usize,
+    pub interventions_pending: usize,
+    pub current_cognitive_load: f32,
+    pub monitoring_enabled: bool,
+    pub detailed_metrics: Option<serde_json::Value>,
+}
+
+/// Response from mind_cognitive_metrics tool
+#[derive(Debug, Serialize)]
+pub struct MindCognitiveMetricsResponse {
+    pub cognitive_load: f32,
+    pub pattern_recognition_rate: f32,
+    pub learning_velocity: f32,
+    pub focus_level: f32,
+    pub confidence: f32,
+    pub thinking_velocity: f32,
+    pub uncertainty_level: f32,
+    pub cognitive_fatigue: f32,
+    pub context_switches: usize,
+    pub working_memory_usage: f32,
+    pub trends: Option<serde_json::Value>,
+}
+
+/// Response from mind_intervention_queue tool
+#[derive(Debug, Serialize)]
+pub struct MindInterventionQueueResponse {
+    pub interventions: Vec<InterventionDetail>,
+    pub total_pending: usize,
+    pub priority_breakdown: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InterventionDetail {
+    pub id: String,
+    pub timestamp: String,
+    pub intervention_type: String,
+    pub priority: String,
+    pub context: String,
+    pub suggested_action: String,
+    pub reason: String,
+    pub confidence: f32,
+}
+
+/// Response from mind_conversation_insights tool
+#[derive(Debug, Serialize)]
+pub struct MindConversationInsightsResponse {
+    pub session_id: String,
+    pub message_count: usize,
+    pub conversation_state: String,
+    pub detected_topics: Vec<String>,
+    pub key_entities: Vec<serde_json::Value>,
+    pub flow_patterns: Vec<String>,
+    pub insights: Vec<String>,
+}
+
+/// Response from mind_entity_tracking tool
+#[derive(Debug, Serialize)]
+pub struct MindEntityTrackingResponse {
+    pub entities: Vec<TrackedEntity>,
+    pub total_detected: usize,
+    pub importance_ranking: Vec<serde_json::Value>,
+    pub enrichment_suggestions: Option<Vec<serde_json::Value>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TrackedEntity {
+    pub text: String,
+    pub entity_type: String,
+    pub confidence: f32,
+    pub context: String,
+    pub occurrences: usize,
+    pub importance_score: f32,
+    pub metadata: Option<serde_json::Value>,
 }
 
 /// Response from ui_identity tool
