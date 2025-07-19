@@ -1,0 +1,12 @@
+usage: run_feedback_processor.py [-h] {start,test,monitor} ...
+
+Feedback Processing Service
+
+positional arguments:
+  {start,test,monitor}  Available commands
+    start               Start the feedback processor
+    test                Test the feedback system setup
+    monitor             Monitor feedback system
+
+optional arguments:
+  -h, --help            show this help message and exit

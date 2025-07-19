@@ -1115,7 +1115,7 @@ impl ThoughtRepository for RedisThoughtRepository {
     
     async fn get_all_identity_documents(&self, instance_id: &str) -> Result<Vec<IdentityDocument>> {
         let pattern = format!("{}:identity:*:*", instance_id);
-        let keys: Vec<String> = self.redis.keys(&pattern).await?;
+        let keys: Vec<String> = self.redis.scan_match(&pattern, 1000).await?;
         
         let mut documents = Vec::new();
         

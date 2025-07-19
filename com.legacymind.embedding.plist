@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.legacymind.embedding</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/samuelatagana/Projects/LegacyMind/start_background_service.py</string>
+    </array>
+    
+    <key>WorkingDirectory</key>
+    <string>/Users/samuelatagana/Projects/LegacyMind</string>
+    
+    <key>StandardOutPath</key>
+    <string>/Users/samuelatagana/Projects/LegacyMind/logs/embedding_service.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/Users/samuelatagana/Projects/LegacyMind/logs/embedding_service_error.log</string>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+</dict>
+</plist>

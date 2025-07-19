@@ -1,0 +1,19 @@
+{
+  "last_run": "2025-07-19T16:45:10.163537",
+  "stats": {
+    "total_thoughts_found": 22387,
+    "new_thoughts_processed": 92,
+    "embeddings_generated": 92,
+    "qdrant_writes": 92,
+    "errors": 0,
+    "start_time": "2025-07-19 16:45:09.074476",
+    "last_run": "2025-07-19 16:45:10.163012"
+  },
+  "instances_processed": [
+    "CC",
+    "CCI",
+    "CCD",
+    "CCS",
+    "DT"
+  ]
+}

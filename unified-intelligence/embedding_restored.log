@@ -1,0 +1,15 @@
+2025-07-16 21:05:47,394 - __main__ - INFO - Background Embedding Service - Production Start
+2025-07-16 21:05:47,394 - __main__ - INFO - ============================================================
+2025-07-16 21:05:47,394 - __main__ - INFO - Starting Background Embedding Service Manager...
+2025-07-16 21:05:47,400 - __main__ - INFO - Retrieved OpenAI API key from Redis
+2025-07-16 21:05:47,400 - __main__ - INFO - Retrieved OpenAI API key (164 characters)
+2025-07-16 21:05:47,403 - __main__ - INFO - Redis connection OK. Stream 'Claude:events' has 5 events
+2025-07-16 21:05:47,430 - __main__ - INFO - Starting background service...
+2025-07-16 21:05:47,430 - background_embedding_service - INFO - Starting Background Embedding Service for instance: Claude
+2025-07-16 21:05:47,430 - background_embedding_service - INFO - Consumer: embedder_41536
+2025-07-16 21:05:47,430 - background_embedding_service - INFO - Stream: Claude:events
+2025-07-16 21:05:47,433 - background_embedding_service - ERROR - Service crashed: object bool can't be used in 'await' expression
+2025-07-16 21:05:47,433 - background_embedding_service - INFO - Cleaning up resources...
+2025-07-16 21:05:47,433 - background_embedding_service - ERROR - Error during cleanup: 'Redis' object has no attribute 'aclose'
+2025-07-16 21:05:47,433 - __main__ - ERROR - Service failed: object bool can't be used in 'await' expression
+2025-07-16 21:05:47,433 - __main__ - ERROR - Service failed to start

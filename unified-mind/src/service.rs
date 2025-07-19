@@ -396,7 +396,7 @@ impl UnifiedMindService {
 
     /// Get pattern statistics for monitoring
     #[tool(description = "Get statistics about learned patterns and their performance")]
-    async fn mind_pattern_stats(&self, _params: Parameters<()>) -> std::result::Result<CallToolResult, ErrorData> {
+    async fn mind_pattern_stats(&self, _params: Parameters<EmptyParams>) -> std::result::Result<CallToolResult, ErrorData> {
         debug!("Getting pattern statistics");
         
         match self.pattern_engine.get_pattern_stats().await {

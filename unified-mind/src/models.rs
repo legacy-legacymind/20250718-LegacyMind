@@ -17,6 +17,8 @@ pub struct MindPatternMatchParams {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MindSuggestRetrievalParams {
     pub task_description: String,
+    #[serde(default)]
+    #[schemars(with = "Option<std::collections::HashMap<String, String>>")]
     pub constraints: Option<Value>,
 }
 
@@ -24,6 +26,8 @@ pub struct MindSuggestRetrievalParams {
 pub struct MindLearnOutcomeParams {
     pub task_id: String,
     pub outcome: String,
+    #[serde(default)]
+    #[schemars(with = "Option<std::collections::HashMap<String, String>>")]
     pub metrics: Option<Value>,
 }
 
@@ -50,5 +54,10 @@ pub struct MindLearnPatternParams {
 pub struct MindInternalVoiceParams {
     pub current_thought: String,
     pub recent_context: Option<Vec<String>>,
+    #[serde(default)]
+    #[schemars(with = "Option<String>")]
     pub cognitive_state: Option<Value>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EmptyParams {}

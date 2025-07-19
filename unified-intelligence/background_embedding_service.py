@@ -17,8 +17,9 @@ import sys
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 from enum import Enum
-import redis.asyncio as redis
+from redis import asyncio as redis_async
 import redis.exceptions
+import redis as sync_redis
 from simple_embeddings import SimpleEmbeddingService
 
 # Configure logging
@@ -53,7 +54,7 @@ class EmbeddingTask:
 class BackgroundEmbeddingService:
     def __init__(self, redis_url: str, openai_api_key: str, instance: str = "Claude"):
         self.redis_url = redis_url
-        self.redis = redis.from_url(redis_url, decode_responses=True)
+        self.redis = redis_async.from_url(redis_url, decode_responses=True)
         self.openai_api_key = openai_api_key
         self.instance = instance
         # Create sync redis URL for SimpleEmbeddingService
@@ -108,7 +109,7 @@ class BackgroundEmbeddingService:
                 mkstream=True
             )
             logger.info(f"Created consumer group: {self.consumer_group}")
-        except redis.exceptions.ResponseError as e:
+        except redis_async.ResponseError as e:
             if "BUSYGROUP" in str(e):
                 logger.info(f"Consumer group already exists: {self.consumer_group}")
             else:
@@ -117,10 +118,13 @@ class BackgroundEmbeddingService:
     async def stream_consumer(self):
         """Consume Redis Streams for new thought events"""
         logger.info("Starting stream consumer...")
+        logger.info(f"Redis client type: {type(self.redis)}")
+        logger.info(f"Redis client class: {self.redis.__class__}")
         
         while True:
             try:
                 # Read from stream
+                logger.debug("About to call xreadgroup...")
                 events = await self.redis.xreadgroup(
                     self.consumer_group,
                     self.consumer_name,
@@ -133,7 +137,7 @@ class BackgroundEmbeddingService:
                     for message_id, fields in messages:
                         await self.process_event(message_id, fields)
                         
-            except redis.exceptions.ConnectionError as e:
+            except redis_async.ConnectionError as e:
                 logger.error(f"Redis connection error: {e}")
                 await asyncio.sleep(5)  # Backoff
             except Exception as e:
@@ -467,11 +471,11 @@ async def main():
     # If not in environment, try Redis
     if not openai_api_key:
         try:
-            sync_redis = redis.from_url(redis_url.replace('redis://', 'redis://'), decode_responses=True)
-            openai_api_key = sync_redis.get('config:openai_api_key')
+            redis_client = sync_redis.from_url(redis_url, decode_responses=True)
+            openai_api_key = redis_client.get('config:openai_api_key')
             if openai_api_key:
                 logger.info(f"Retrieved OPENAI_API_KEY from Redis ({len(openai_api_key)} chars)")
-            sync_redis.close()
+            redis_client.close()
         except Exception as e:
             logger.error(f"Error retrieving API key from Redis: {e}")
     

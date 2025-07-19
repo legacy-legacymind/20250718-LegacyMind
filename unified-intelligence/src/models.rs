@@ -535,12 +535,37 @@ pub struct CommunicationStyle {
     pub formality: String,         // "informal", "formal", "adaptive"
 }
 
+fn default_trust_level() -> f32 {
+    0.5 // Default neutral trust level
+}
+
+fn default_interaction_style() -> String {
+    "collaborative".to_string()
+}
+
+fn default_boundaries() -> Vec<String> {
+    vec![]
+}
+
+fn default_shared_history() -> Vec<String> {
+    vec![]
+}
+
+fn default_current_standing() -> String {
+    "good".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RelationshipDynamics {
+    #[serde(default = "default_trust_level")]
     pub trust_level: f32,          // 0.0 to 1.0
+    #[serde(default = "default_interaction_style")]
     pub interaction_style: String,  // "collaborative", "subordinate", "partner"
+    #[serde(default = "default_boundaries")]
     pub boundaries: Vec<String>,    // ["don't do X without asking", "always use Y"]
+    #[serde(default = "default_shared_history")]
     pub shared_history: Vec<String>, // Key events/learnings
+    #[serde(default = "default_current_standing")]
     pub current_standing: String,   // "good", "strained", "rebuilding"
 }
 

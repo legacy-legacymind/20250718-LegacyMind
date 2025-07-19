@@ -75,6 +75,12 @@ impl From<crate::validation::ValidationError> for UnifiedIntelligenceError {
     }
 }
 
+/// Convert Box<dyn Error> to UnifiedIntelligenceError
+impl From<Box<dyn std::error::Error + Send + Sync>> for UnifiedIntelligenceError {
+    fn from(err: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        UnifiedIntelligenceError::Internal(err.to_string())
+    }
+}
 
 /// Result type alias for convenience
 pub type Result<T> = std::result::Result<T, UnifiedIntelligenceError>;
