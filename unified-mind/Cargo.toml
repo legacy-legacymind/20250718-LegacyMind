@@ -1,0 +1,54 @@
+[package]
+name = "unified-mind"
+version = "0.1.0"
+edition = "2021"
+authors = ["Samuel Atagana"]
+description = "Cognitive subconscious platform for pattern learning and adaptive dialogue"
+
+[dependencies]
+# Core MCP dependencies
+rmcp = { version = "0.3.0", features = ["transport-io"] }
+rmcp-macros = "0.3.0"
+
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Redis for pattern storage
+redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID generation
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+# Additional utilities
+async-trait = "0.1"
+dashmap = "5.5"
+parking_lot = "0.12"
+
+# Random number generation
+rand = "0.8"
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json", "tokio-native-tls"] }
+
+# Regular expressions
+regex = "1.10"
+
+[dev-dependencies]
+tokio-test = "0.4"
+mockall = "0.12"
+criterion = "0.5"
