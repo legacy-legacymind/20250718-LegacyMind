@@ -7,11 +7,11 @@ use crate::redis::RedisManager;
 use crate::search_optimization::SearchCache;
 // use crate::embeddings::EmbeddingGenerator;
 use crate::redisvl_service::RedisVLService;
+use crate::identity_documents::{IdentityDocument, IdentityIndex, IdentityMetadata};
 
 /// Repository trait for thought storage operations
 #[async_trait]
 #[cfg_attr(test, mockall::automock)]
-#[allow(dead_code)]
 pub trait ThoughtRepository: Send + Sync {
     /// Store a thought record
     async fn save_thought(&self, thought: &ThoughtRecord) -> Result<()>;
@@ -138,6 +138,40 @@ pub trait ThoughtRepository: Send + Sync {
     /// Save identity for instance
     async fn save_identity(&self, identity_key: &str, identity: &Identity) -> Result<()>;
     
+    /// Delete identity for instance
+    async fn delete_identity(&self, identity_key: &str) -> Result<()>;
+    
+    // ===== IDENTITY DOCUMENT METHODS =====
+    
+    /// Get identity documents by field type
+    async fn get_identity_documents_by_field(&self, instance_id: &str, field_type: &str) -> Result<Vec<IdentityDocument>>;
+    
+    /// Save an identity document
+    async fn save_identity_document(&self, document: &IdentityDocument) -> Result<()>;
+    
+    /// Delete an identity document
+    async fn delete_identity_document(&self, instance_id: &str, field_type: &str, document_id: &str) -> Result<()>;
+    
+    /// Get all identity documents for instance
+    async fn get_all_identity_documents(&self, instance_id: &str) -> Result<Vec<IdentityDocument>>;
+    
+    /// Delete all identity documents for instance
+    async fn delete_all_identity_documents(&self, instance_id: &str) -> Result<()>;
+    
+    /// Search identity documents
+    async fn search_identity_documents(&self, instance_id: &str, query: &str, limit: Option<usize>) -> Result<Vec<IdentityDocument>>;
+    
+    /// Get identity document by ID
+    async fn get_identity_document_by_id(&self, instance_id: &str, document_id: &str) -> Result<Option<IdentityDocument>>;
+    
+    /// Update identity document metadata
+    async fn update_identity_document_metadata(&self, instance_id: &str, document_id: &str, metadata: IdentityMetadata) -> Result<()>;
+    
+    /// Migrate monolithic identity to documents
+    async fn migrate_identity_to_documents(&self, instance_id: &str) -> Result<Vec<IdentityDocument>>;
+    
+    // ===== JSON METHODS =====
+    
     /// Append to JSON array field
     async fn json_array_append(&self, key: &str, path: &str, value: &serde_json::Value) -> Result<()>;
     
@@ -156,6 +190,7 @@ pub trait ThoughtRepository: Send + Sync {
     /// Log event to instance stream
     async fn log_event(&self, instance: &str, event_type: &str, fields: Vec<(&str, &str)>) -> Result<()>;
 }
+
 
 /// Redis implementation of ThoughtRepository
 pub struct RedisThoughtRepository {
@@ -1010,6 +1045,185 @@ impl ThoughtRepository for RedisThoughtRepository {
         tracing::debug!("Applied boost scores to {} thoughts in instance {}", thoughts.len(), instance);
         Ok(())
     }
+    
+    // ===== IDENTITY METHODS =====
+    
+    async fn delete_identity(&self, identity_key: &str) -> Result<()> {
+        self.redis.del(identity_key).await?;
+        Ok(())
+    }
+    
+    // ===== IDENTITY DOCUMENT METHODS =====
+    
+    async fn get_identity_documents_by_field(&self, instance_id: &str, field_type: &str) -> Result<Vec<IdentityDocument>> {
+        let pattern = format!("{}:identity:{}:*", instance_id, field_type);
+        let keys: Vec<String> = self.redis.keys(&pattern).await?;
+        
+        let mut documents = Vec::new();
+        
+        for key in keys {
+            if let Some(value) = self.redis.json_get(&key, ".").await? {
+                let doc: IdentityDocument = serde_json::from_value(value)?;
+                documents.push(doc);
+            }
+        }
+        
+        // Sort by creation date (newest first)
+        documents.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        
+        Ok(documents)
+    }
+    
+    async fn save_identity_document(&self, document: &IdentityDocument) -> Result<()> {
+        let key = document.redis_key();
+        let value = serde_json::to_value(document)?;
+        
+        // Save the document
+        self.redis.json_set(&key, ".", &value).await?;
+        
+        // Log the event
+        self.log_event(
+            &document.instance,
+            "identity_document_saved",
+            vec![
+                ("field_type", &document.field_type),
+                ("document_id", &document.id),
+            ],
+        ).await?;
+        
+        Ok(())
+    }
+    
+    async fn delete_identity_document(&self, instance_id: &str, field_type: &str, document_id: &str) -> Result<()> {
+        let key = format!("{}:identity:{}:{}", instance_id, field_type, document_id);
+        
+        // Delete the document
+        self.redis.json_del(&key, ".").await?;
+        
+        // Log the event
+        self.log_event(
+            instance_id,
+            "identity_document_deleted",
+            vec![
+                ("field_type", field_type),
+                ("document_id", document_id),
+            ],
+        ).await?;
+        
+        Ok(())
+    }
+    
+    async fn get_all_identity_documents(&self, instance_id: &str) -> Result<Vec<IdentityDocument>> {
+        let pattern = format!("{}:identity:*:*", instance_id);
+        let keys: Vec<String> = self.redis.keys(&pattern).await?;
+        
+        let mut documents = Vec::new();
+        
+        for key in keys {
+            // Skip index keys
+            if key.ends_with(":index") {
+                continue;
+            }
+            
+            if let Some(value) = self.redis.json_get(&key, ".").await? {
+                let doc: IdentityDocument = serde_json::from_value(value)?;
+                documents.push(doc);
+            }
+        }
+        
+        // Sort by creation date (newest first)
+        documents.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        
+        Ok(documents)
+    }
+    
+    async fn delete_all_identity_documents(&self, instance_id: &str) -> Result<()> {
+        let pattern = format!("{}:identity:*:*", instance_id);
+        let keys: Vec<String> = self.redis.keys(&pattern).await?;
+        
+        for key in keys {
+            self.redis.del(&key).await?;
+        }
+        
+        Ok(())
+    }
+    
+    async fn search_identity_documents(&self, instance_id: &str, query: &str, limit: Option<usize>) -> Result<Vec<IdentityDocument>> {
+        // For now, simple pattern matching - can be enhanced with semantic search later
+        let documents = self.get_all_identity_documents(instance_id).await?;
+        
+        let filtered: Vec<IdentityDocument> = documents
+            .into_iter()
+            .filter(|doc| {
+                let content_str = doc.content.to_string().to_lowercase();
+                let query_lower = query.to_lowercase();
+                content_str.contains(&query_lower) || doc.field_type.to_lowercase().contains(&query_lower)
+            })
+            .take(limit.unwrap_or(50))
+            .collect();
+        
+        Ok(filtered)
+    }
+    
+    async fn get_identity_document_by_id(&self, instance_id: &str, document_id: &str) -> Result<Option<IdentityDocument>> {
+        // Search for document by ID across all field types
+        let pattern = format!("{}:identity:*:{}", instance_id, document_id);
+        let keys: Vec<String> = self.redis.keys(&pattern).await?;
+        
+        if let Some(key) = keys.first() {
+            if let Some(value) = self.redis.json_get(key, ".").await? {
+                let doc: IdentityDocument = serde_json::from_value(value)?;
+                return Ok(Some(doc));
+            }
+        }
+        
+        Ok(None)
+    }
+    
+    async fn update_identity_document_metadata(&self, instance_id: &str, document_id: &str, metadata: IdentityMetadata) -> Result<()> {
+        if let Some(mut document) = self.get_identity_document_by_id(instance_id, document_id).await? {
+            document.metadata = metadata;
+            document.mark_accessed();
+            self.save_identity_document(&document).await?;
+        }
+        Ok(())
+    }
+    
+    async fn migrate_identity_to_documents(&self, instance_id: &str) -> Result<Vec<IdentityDocument>> {
+        let identity_key = format!("{}:identity", instance_id);
+        
+        // Get existing monolithic identity
+        let identity = match self.get_identity(&identity_key).await? {
+            Some(id) => id,
+            None => return Ok(Vec::new()), // No identity to migrate
+        };
+        
+        // Convert to JSON value
+        let identity_json = serde_json::to_value(&identity)?;
+        
+        // Convert to documents
+        use crate::identity_documents::conversion;
+        let documents = conversion::monolithic_to_documents(
+            identity_json,
+            instance_id.to_string(),
+        )?;
+        
+        // Save all documents
+        for doc in &documents {
+            self.save_identity_document(doc).await?;
+        }
+        
+        // Log migration event
+        self.log_event(
+            instance_id,
+            "identity_migrated_to_documents",
+            vec![
+                ("document_count", &documents.len().to_string()),
+            ],
+        ).await?;
+        
+        Ok(documents)
+    }
 }
 
 impl RedisThoughtRepository {
@@ -1125,4 +1339,6 @@ impl RedisThoughtRepository {
         *thoughts = filtered_thoughts;
         Ok(())
     }
+    
 }
+

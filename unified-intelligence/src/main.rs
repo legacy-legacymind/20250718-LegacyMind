@@ -17,6 +17,7 @@ mod lua_scripts;
 mod redisvl_service;
 mod visual;
 mod frameworks;
+mod identity_documents;
 
 use crate::service::UnifiedIntelligenceService;
 

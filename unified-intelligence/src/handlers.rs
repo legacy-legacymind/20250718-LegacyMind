@@ -13,6 +13,7 @@ use crate::models::{
     MindEntityTrackingParams, MindEntityTrackingResponse, TrackedEntity
 };
 use crate::repository::ThoughtRepository;
+#[cfg(not(test))]
 use crate::search_optimization::SearchCache;
 use crate::validation::InputValidator;
 use crate::visual::VisualOutput;
@@ -65,7 +66,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         };
 
         // Display visual start with framework
-        self.visual.thought_start(params.thought_number, params.total_thoughts, &self.instance_id);
+        self.visual.thought_start(params.thought_number, params.total_thoughts);
         FrameworkVisual::display_framework_start(&framework);
         self.visual.thought_content(&params.thought);
         
@@ -159,7 +160,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         }
         
         // Display success and completion status
-        self.visual.thought_stored(&thought_id, &self.instance_id);
+        self.visual.thought_stored(&thought_id);
         
         if !params.next_thought_needed {
             self.visual.thinking_complete();
@@ -560,6 +561,9 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
                     reason: "value required for add operation".to_string(),
                 })?;
                 
+                #[cfg(not(test))]
+                self.add_to_identity_document(&category, &field, value).await?;
+                #[cfg(test)]
                 self.add_to_identity_field(&category, &field, value).await?;
                 Ok(IdentityResponse::Updated { 
                     operation: "add".to_string(),
@@ -584,6 +588,9 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
                 })?;
                 
                 
+                #[cfg(not(test))]
+                self.modify_identity_document(&category, &field, value).await?;
+                #[cfg(test)]
                 self.modify_identity_field(&category, &field, value).await?;
                 Ok(IdentityResponse::Updated { 
                     operation: "modify".to_string(),
@@ -603,6 +610,9 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
                     reason: "field required for delete operation".to_string(),
                 })?;
                 
+                #[cfg(not(test))]
+                self.delete_from_identity_document(&category, &field, params.value).await?;
+                #[cfg(test)]
                 self.delete_from_identity_field(&category, &field, params.value).await?;
                 Ok(IdentityResponse::Updated { 
                     operation: "delete".to_string(),
@@ -618,9 +628,67 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         }
     }
     
-    // Helper methods for identity operations
+    // Helper methods for document-based identity operations
+    
+    #[cfg(not(test))]
+    async fn get_or_create_identity_documents(&self) -> Result<Identity> {
+        // First, check if we need to migrate from monolithic format
+        let identity_key = format!("{}:identity", self.instance_id);
+        if self.repository.get_identity(&identity_key).await?.is_some() {
+            // Migrate existing monolithic identity to documents
+            tracing::info!("Migrating monolithic identity to document format for {}", self.instance_id);
+            self.repository.migrate_identity_to_documents(&self.instance_id).await?;
+            
+            // Optional: Delete the old monolithic identity after successful migration
+            // self.repository.json_delete(&identity_key, ".").await?;
+        }
+        
+        // Get all identity documents
+        let documents = self.repository.get_all_identity_documents(&self.instance_id).await?;
+        
+        if documents.is_empty() {
+            // Create default identity documents
+            let default_identity = Identity::default_for_instance(&self.instance_id);
+            let identity_json = serde_json::to_value(&default_identity)?;
+            
+            // Convert to documents and save
+            let new_documents = crate::identity_documents::conversion::monolithic_to_documents(
+                identity_json,
+                self.instance_id.clone(),
+            )?;
+            
+            for doc in &new_documents {
+                self.repository.save_identity_document(doc).await?;
+            }
+            
+            Ok(default_identity)
+        } else {
+            // Convert documents back to monolithic format for response
+            let identity_json = crate::identity_documents::conversion::documents_to_monolithic(documents);
+            let identity: Identity = serde_json::from_value(identity_json)?;
+            Ok(identity)
+        }
+    }
+    
+    #[cfg(test)]
+    async fn get_or_create_identity_documents(&self) -> Result<Identity> {
+        // Test version - just use old monolithic storage
+        self.get_or_create_identity_monolithic().await
+    }
     
     async fn get_or_create_identity(&self) -> Result<Identity> {
+        // Backward compatibility wrapper
+        #[cfg(not(test))]
+        {
+            self.get_or_create_identity_documents().await
+        }
+        #[cfg(test)]
+        {
+            self.get_or_create_identity_monolithic().await
+        }
+    }
+    
+    async fn get_or_create_identity_monolithic(&self) -> Result<Identity> {
         let identity_key = format!("{}:identity", self.instance_id);
         
         // Try to get existing identity using Redis JSON.GET
@@ -634,35 +702,69 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         }
     }
     
-    async fn add_to_identity_field(&self, category: &str, field: &str, value: serde_json::Value) -> Result<()> {
+    #[cfg(not(test))]
+    async fn add_to_identity_document(&self, category: &str, field: &str, value: serde_json::Value) -> Result<()> {
         // Validate category
         self.validate_category(category)?;
-        
-        let identity_key = format!("{}:identity", self.instance_id);
         
         // Process value to ensure correct type
         let processed_value = self.process_identity_value(category, field, value)?;
         
-        // Add to array fields using Redis JSON operations
+        // Determine field type for document
+        let field_type = if field == "relationships" || category == "relationships" {
+            format!("relationships:{}", field)
+        } else {
+            category.to_string()
+        };
+        
+        // Get or create document for this field type
+        let existing_docs = self.repository.get_identity_documents_by_field(&self.instance_id, &field_type).await?;
+        
+        let mut document = if let Some(doc) = existing_docs.into_iter().next() {
+            doc
+        } else {
+            // Create new document
+            crate::identity_documents::IdentityDocument::new(
+                field_type.clone(),
+                serde_json::json!({}),
+                self.instance_id.clone(),
+            )
+        };
+        
+        // Update the document content
+        let current_content = document.content.as_object_mut()
+            .ok_or_else(|| UnifiedIntelligenceError::Validation {
+                field: "content".to_string(),
+                reason: "Document content must be an object".to_string(),
+            })?;
+        
+        // Handle array fields
         match field {
             // Array fields that support appending
             "common_mistakes" | "strengths" | "triggers" | "improvement_areas" 
             | "preferred_languages" | "frameworks" | "tools" | "expertise_areas" 
             | "learning_interests" | "active_goals" | "core_values" 
             | "boundaries" | "shared_history" | "priority_topics" => {
-                let path = format!("$.{}.{}", category, field);
-                self.repository.json_array_append(&identity_key, &path, &processed_value).await?;
+                let array = current_content.entry(field)
+                    .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+                
+                if let serde_json::Value::Array(arr) = array {
+                    arr.push(processed_value);
+                }
             }
             
-            // Object fields (like relationships map) or scalar fields
+            // Object fields or scalar fields
             _ => {
-                let path = format!("$.{}.{}", category, field);
-                self.repository.json_set(&identity_key, &path, &processed_value).await?;
+                current_content.insert(field.to_string(), processed_value);
             }
         }
         
-        // Update metadata
-        self.update_identity_metadata(&identity_key).await?;
+        // Mark as accessed and update
+        document.mark_accessed();
+        document.version += 1;
+        
+        // Save the updated document
+        self.repository.save_identity_document(&document).await?;
         
         // Log the change
         self.repository.log_event(
@@ -678,21 +780,58 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         Ok(())
     }
     
-    async fn modify_identity_field(&self, category: &str, field: &str, value: serde_json::Value) -> Result<()> {
+    // Backward compatibility wrapper
+    async fn add_to_identity_field(&self, category: &str, field: &str, value: serde_json::Value) -> Result<()> {
+        self.add_to_identity_document(category, field, value).await
+    }
+    
+    #[cfg(not(test))]
+    async fn modify_identity_document(&self, category: &str, field: &str, value: serde_json::Value) -> Result<()> {
         // Validate category
         self.validate_category(category)?;
         
-        let identity_key = format!("{}:identity", self.instance_id);
-        let path = format!("$.{}.{}", category, field);
-        
-        // Convert string values to numbers for known numeric fields
+        // Process value to ensure correct type
         let processed_value = self.process_identity_value(category, field, value)?;
         
-        // Use Redis JSON.SET for direct field modification
-        self.repository.json_set(&identity_key, &path, &processed_value).await?;
+        // Determine field type for document
+        let field_type = if field == "relationships" || category == "relationships" {
+            format!("relationships:{}", field)
+        } else {
+            category.to_string()
+        };
         
-        // Update metadata and log
-        self.update_identity_metadata(&identity_key).await?;
+        // Get existing document
+        let existing_docs = self.repository.get_identity_documents_by_field(&self.instance_id, &field_type).await?;
+        
+        let mut document = if let Some(doc) = existing_docs.into_iter().next() {
+            doc
+        } else {
+            // Create new document if doesn't exist
+            crate::identity_documents::IdentityDocument::new(
+                field_type.clone(),
+                serde_json::json!({}),
+                self.instance_id.clone(),
+            )
+        };
+        
+        // Update the document content
+        let current_content = document.content.as_object_mut()
+            .ok_or_else(|| UnifiedIntelligenceError::Validation {
+                field: "content".to_string(),
+                reason: "Document content must be an object".to_string(),
+            })?;
+        
+        // Set the field value (replace entire value)
+        current_content.insert(field.to_string(), processed_value);
+        
+        // Mark as accessed and update version
+        document.mark_accessed();
+        document.version += 1;
+        
+        // Save the updated document
+        self.repository.save_identity_document(&document).await?;
+        
+        // Log the change
         self.repository.log_event(
             &self.instance_id,
             "identity_updated",
@@ -706,30 +845,60 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         Ok(())
     }
     
-    async fn delete_from_identity_field(&self, category: &str, field: &str, value: Option<serde_json::Value>) -> Result<()> {
+    // Backward compatibility wrapper
+    async fn modify_identity_field(&self, category: &str, field: &str, value: serde_json::Value) -> Result<()> {
+        self.modify_identity_document(category, field, value).await
+    }
+    
+    #[cfg(not(test))]
+    async fn delete_from_identity_document(&self, category: &str, field: &str, value: Option<serde_json::Value>) -> Result<()> {
         // Validate category
         self.validate_category(category)?;
         
-        let identity_key = format!("{}:identity", self.instance_id);
-        
-        if let Some(target_value) = value {
-            // Remove specific value from array - requires getting array, filtering, setting back
-            let path = format!("$.{}.{}", category, field);
-            if let Some(current_array) = self.repository.json_get_array(&identity_key, &path).await? {
-                let filtered: Vec<serde_json::Value> = current_array
-                    .into_iter()
-                    .filter(|v| v != &target_value)
-                    .collect();
-                self.repository.json_set(&identity_key, &path, &serde_json::Value::Array(filtered)).await?;
-            }
+        // Determine field type for document
+        let field_type = if field == "relationships" || category == "relationships" {
+            format!("relationships:{}", field)
         } else {
-            // Delete entire field using JSON.DEL
-            let path = format!("$.{}.{}", category, field);
-            self.repository.json_delete(&identity_key, &path).await?;
+            category.to_string()
+        };
+        
+        // Get existing document
+        let existing_docs = self.repository.get_identity_documents_by_field(&self.instance_id, &field_type).await?;
+        
+        if let Some(mut document) = existing_docs.into_iter().next() {
+            let current_content = document.content.as_object_mut()
+                .ok_or_else(|| UnifiedIntelligenceError::Validation {
+                    field: "content".to_string(),
+                    reason: "Document content must be an object".to_string(),
+                })?;
+            
+            if let Some(target_value) = value {
+                // Remove specific value from array field
+                if let Some(field_value) = current_content.get_mut(field) {
+                    if let serde_json::Value::Array(arr) = field_value {
+                        arr.retain(|v| v != &target_value);
+                    }
+                }
+            } else {
+                // Delete entire field
+                current_content.remove(field);
+                
+                // If document is now empty (except metadata), delete the document
+                if current_content.is_empty() {
+                    self.repository.delete_identity_document(&self.instance_id, &field_type, &document.id).await?;
+                    return Ok(());
+                }
+            }
+            
+            // Mark as accessed and update version
+            document.mark_accessed();
+            document.version += 1;
+            
+            // Save the updated document
+            self.repository.save_identity_document(&document).await?;
         }
         
-        // Update metadata and log
-        self.update_identity_metadata(&identity_key).await?;
+        // Log the change
         self.repository.log_event(
             &self.instance_id,
             "identity_updated",
@@ -743,19 +912,15 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         Ok(())
     }
     
-    async fn update_identity_metadata(&self, identity_key: &str) -> Result<()> {
-        let now = chrono::Utc::now();
-        
-        // Update metadata fields using JSON.SET
-        self.repository.json_set(
-            identity_key, 
-            "$.metadata.last_updated", 
-            &serde_json::Value::String(now.to_rfc3339())
-        ).await?;
-        
-        // Increment update count using JSON.NUMINCRBY
-        self.repository.json_increment(identity_key, "$.metadata.update_count", 1).await?;
-        
+    // Backward compatibility wrapper
+    async fn delete_from_identity_field(&self, category: &str, field: &str, value: Option<serde_json::Value>) -> Result<()> {
+        self.delete_from_identity_document(category, field, value).await
+    }
+    
+    // Metadata is now handled per-document automatically
+    async fn update_identity_metadata(&self, _identity_key: &str) -> Result<()> {
+        // No-op for backward compatibility
+        // Document metadata is updated automatically when documents are saved
         Ok(())
     }
     

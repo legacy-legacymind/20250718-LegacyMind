@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -109,7 +107,7 @@ impl RedisManager {
         let mut conn = self.get_connection().await?;
         
         // Store with a 24-hour expiration (can be refreshed on service restart)
-        conn.set_ex::<_, _, ()>(format!("config:{}", key_name), api_key, 86400).await?;
+        conn.set_ex(format!("config:{}", key_name), api_key, 86400).await?;
         
         tracing::debug!("Stored API key '{}' in Redis", key_name);
         Ok(())
@@ -183,7 +181,7 @@ impl RedisManager {
         value: &T,
     ) -> Result<()> {
         let mut conn = self.get_connection().await?;
-        conn.json_set::<_, _, _, ()>(key, path, value).await?;
+        conn.json_set(key, path, value).await?;
         Ok(())
     }
     
@@ -229,6 +227,19 @@ impl RedisManager {
         }
     }
     
+    /// Delete a JSON path
+    pub async fn json_del(&self, key: &str, path: &str) -> Result<()> {
+        let mut conn = self.get_connection().await?;
+        
+        redis::cmd("JSON.DEL")
+            .arg(key)
+            .arg(path)
+            .query_async(&mut *conn)
+            .await?;
+        
+        Ok(())
+    }
+    
     /// Check if a key exists
     pub async fn exists(&self, key: &str) -> Result<bool> {
         let mut conn = self.get_connection().await?;
@@ -238,7 +249,7 @@ impl RedisManager {
     /// Delete a key
     pub async fn del(&self, key: &str) -> Result<()> {
         let mut conn = self.get_connection().await?;
-        conn.del::<_, ()>(key).await?;
+        conn.del(key).await?;
         Ok(())
     }
     
@@ -254,7 +265,7 @@ impl RedisManager {
     /// Increment a value in a sorted set
     pub async fn zadd(&self, key: &str, member: &str, score: f64) -> Result<()> {
         let mut conn = self.get_connection().await?;
-        conn.zadd::<_, _, _, ()>(key, member, score).await?;
+        conn.zadd(key, member, score).await?;
         Ok(())
     }
     
@@ -267,7 +278,7 @@ impl RedisManager {
     /// Add member to a set
     pub async fn sadd(&self, key: &str, member: &str) -> Result<()> {
         let mut conn = self.get_connection().await?;
-        conn.sadd::<_, _, ()>(key, member).await?;
+        conn.sadd(key, member).await?;
         Ok(())
     }
     
@@ -401,6 +412,11 @@ impl RedisManager {
     }
     
     /// Scan for keys matching a pattern
+    /// Get keys matching a pattern (use with caution in production)
+    pub async fn keys(&self, pattern: &str) -> Result<Vec<String>> {
+        self.scan_match(pattern, 1000).await
+    }
+    
     pub async fn scan_match(&self, pattern: &str, count: usize) -> Result<Vec<String>> {
         let mut conn = self.get_connection().await?;
         let mut cursor = 0;
