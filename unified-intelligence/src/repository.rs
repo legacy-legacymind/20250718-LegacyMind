@@ -11,6 +11,7 @@ use crate::redisvl_service::RedisVLService;
 /// Repository trait for thought storage operations
 #[async_trait]
 #[cfg_attr(test, mockall::automock)]
+#[allow(dead_code)]
 pub trait ThoughtRepository: Send + Sync {
     /// Store a thought record
     async fn save_thought(&self, thought: &ThoughtRecord) -> Result<()>;

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
@@ -107,7 +109,7 @@ impl RedisManager {
         let mut conn = self.get_connection().await?;
         
         // Store with a 24-hour expiration (can be refreshed on service restart)
-        conn.set_ex(format!("config:{}", key_name), api_key, 86400).await?;
+        conn.set_ex::<_, _, ()>(format!("config:{}", key_name), api_key, 86400).await?;
         
         tracing::debug!("Stored API key '{}' in Redis", key_name);
         Ok(())
@@ -181,7 +183,7 @@ impl RedisManager {
         value: &T,
     ) -> Result<()> {
         let mut conn = self.get_connection().await?;
-        conn.json_set(key, path, value).await?;
+        conn.json_set::<_, _, _, ()>(key, path, value).await?;
         Ok(())
     }
     
@@ -236,7 +238,7 @@ impl RedisManager {
     /// Delete a key
     pub async fn del(&self, key: &str) -> Result<()> {
         let mut conn = self.get_connection().await?;
-        conn.del(key).await?;
+        conn.del::<_, ()>(key).await?;
         Ok(())
     }
     
@@ -252,7 +254,7 @@ impl RedisManager {
     /// Increment a value in a sorted set
     pub async fn zadd(&self, key: &str, member: &str, score: f64) -> Result<()> {
         let mut conn = self.get_connection().await?;
-        conn.zadd(key, member, score).await?;
+        conn.zadd::<_, _, _, ()>(key, member, score).await?;
         Ok(())
     }
     
@@ -265,7 +267,7 @@ impl RedisManager {
     /// Add member to a set
     pub async fn sadd(&self, key: &str, member: &str) -> Result<()> {
         let mut conn = self.get_connection().await?;
-        conn.sadd(key, member).await?;
+        conn.sadd::<_, _, ()>(key, member).await?;
         Ok(())
     }
     

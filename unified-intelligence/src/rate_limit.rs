@@ -65,6 +65,7 @@ impl RateLimiter {
     }
     
     /// Get current usage statistics for monitoring
+    #[allow(dead_code)]
     pub async fn get_usage_stats(&self) -> HashMap<String, usize> {
         let mut windows = self.windows.lock().await;
         let now = Instant::now();
@@ -85,6 +86,7 @@ impl RateLimiter {
     }
     
     /// Clear rate limit data for a specific instance (useful for testing or admin override)
+    #[allow(dead_code)]
     pub async fn clear_instance(&self, instance_id: &str) {
         let mut windows = self.windows.lock().await;
         windows.remove(instance_id);

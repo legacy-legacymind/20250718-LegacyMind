@@ -6,6 +6,7 @@ use rmcp::model::ErrorData;
 use tracing;
 
 /// Optimized search implementation using batch operations
+#[allow(dead_code)]
 pub struct OptimizedSearch;
 
 impl OptimizedSearch {
@@ -56,6 +57,7 @@ impl OptimizedSearch {
     }
     
     /// Optimized search with batch operations and early termination
+    #[allow(dead_code)]
     pub async fn search_with_batching(
         conn: &mut deadpool_redis::Connection,
         query: &str,
@@ -115,6 +117,7 @@ impl OptimizedSearch {
     }
     
     /// Search with cursor state for pagination
+    #[allow(dead_code)]
     pub async fn search_paginated(
         conn: &mut deadpool_redis::Connection,
         query: &str,

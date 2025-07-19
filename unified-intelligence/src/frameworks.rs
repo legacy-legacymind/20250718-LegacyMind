@@ -3,7 +3,7 @@
 
 use colored::*;
 use thiserror::Error;
-use tokio::time::{Duration, timeout};
+// Removed unused imports: Duration, timeout
 
 /// Framework validation and processing errors
 #[derive(Error, Debug)]
@@ -12,9 +12,11 @@ pub enum FrameworkError {
     InvalidFramework { name: String, valid_list: String },
     
     #[error("Framework processing timeout after {timeout_ms}ms")]
+    #[allow(dead_code)]
     ProcessingTimeout { timeout_ms: u64 },
     
     #[error("Framework processing failed: {reason}")]
+    #[allow(dead_code)]
     ProcessingFailed { reason: String },
     
     #[error("Empty framework name provided")]
@@ -64,6 +66,7 @@ impl ThinkingFramework {
     }
     
     /// Safe parse that returns Sequential as fallback
+    #[allow(dead_code)]
     pub fn from_string_safe(framework: &str) -> Self {
         Self::from_string(framework).unwrap_or(Self::Sequential)
     }
@@ -82,6 +85,7 @@ impl ThinkingFramework {
     }
 
     /// Get framework description
+    #[allow(dead_code)]
     pub fn description(&self) -> &'static str {
         match self {
             Self::Sequential => "Standard sequential thinking process",
@@ -95,6 +99,7 @@ impl ThinkingFramework {
     }
 
     /// Get framework color for visual output
+    #[allow(dead_code)]
     pub fn color(&self) -> &'static str {
         match self {
             Self::Sequential => "bright_blue",
@@ -134,15 +139,15 @@ impl FrameworkProcessor {
     /// Sequential framework (default - no additional processing)
     fn process_sequential(&self, _thought: &str) -> FrameworkResult {
         FrameworkResult {
-            framework: self.framework.clone(),
+            _framework: self.framework.clone(),
             prompts: vec![],
             insights: vec![],
-            metadata: None,
+            _metadata: None,
         }
     }
 
     /// OODA Loop framework
-    fn process_ooda(&self, thought: &str, thought_number: i32) -> FrameworkResult {
+    fn process_ooda(&self, _thought: &str, thought_number: i32) -> FrameworkResult {
         let stage = match thought_number % 4 {
             1 => "Observe",
             2 => "Orient", 
@@ -172,10 +177,10 @@ impl FrameworkProcessor {
         };
 
         FrameworkResult {
-            framework: self.framework.clone(),
+            _framework: self.framework.clone(),
             prompts,
             insights: vec![format!("OODA Stage: {}", stage)],
-            metadata: Some(serde_json::json!({
+            _metadata: Some(serde_json::json!({
                 "ooda_stage": stage,
                 "stage_number": thought_number % 4,
             })),
@@ -183,7 +188,7 @@ impl FrameworkProcessor {
     }
 
     /// Socratic Method framework
-    fn process_socratic(&self, thought: &str) -> FrameworkResult {
+    fn process_socratic(&self, _thought: &str) -> FrameworkResult {
         let prompts = vec![
             "What assumptions are you making in this thought?".to_string(),
             "What evidence supports or challenges this idea?".to_string(),
@@ -192,10 +197,10 @@ impl FrameworkProcessor {
         ];
 
         FrameworkResult {
-            framework: self.framework.clone(),
+            _framework: self.framework.clone(),
             prompts,
             insights: vec!["Question your assumptions and examine evidence".to_string()],
-            metadata: Some(serde_json::json!({
+            _metadata: Some(serde_json::json!({
                 "method": "questioning",
                 "focus": "assumptions_and_evidence"
             })),
@@ -203,7 +208,7 @@ impl FrameworkProcessor {
     }
 
     /// First Principles framework
-    fn process_first_principles(&self, thought: &str) -> FrameworkResult {
+    fn process_first_principles(&self, _thought: &str) -> FrameworkResult {
         let prompts = vec![
             "What are the fundamental facts that are certainly true?".to_string(),
             "What am I assuming that might not be true?".to_string(),
@@ -212,10 +217,10 @@ impl FrameworkProcessor {
         ];
 
         FrameworkResult {
-            framework: self.framework.clone(),
+            _framework: self.framework.clone(),
             prompts,
             insights: vec!["Break down to fundamental truths and reason upward".to_string()],
-            metadata: Some(serde_json::json!({
+            _metadata: Some(serde_json::json!({
                 "approach": "deconstruction",
                 "goal": "fundamental_understanding"
             })),
@@ -223,7 +228,7 @@ impl FrameworkProcessor {
     }
 
     /// Systems Thinking framework
-    fn process_systems(&self, thought: &str) -> FrameworkResult {
+    fn process_systems(&self, _thought: &str) -> FrameworkResult {
         let prompts = vec![
             "What other elements or systems does this connect to?".to_string(),
             "What are the feedback loops and interconnections?".to_string(),
@@ -232,10 +237,10 @@ impl FrameworkProcessor {
         ];
 
         FrameworkResult {
-            framework: self.framework.clone(),
+            _framework: self.framework.clone(),
             prompts,
             insights: vec!["Consider interconnections and system-wide effects".to_string()],
-            metadata: Some(serde_json::json!({
+            _metadata: Some(serde_json::json!({
                 "perspective": "holistic",
                 "focus": "interconnections"
             })),
@@ -243,7 +248,7 @@ impl FrameworkProcessor {
     }
 
     /// Root Cause Analysis (Five Whys) framework
-    fn process_root_cause(&self, thought: &str, thought_number: i32) -> FrameworkResult {
+    fn process_root_cause(&self, _thought: &str, thought_number: i32) -> FrameworkResult {
         let why_number = std::cmp::min(thought_number, 5);
         let prompt = format!("Why #{}: Why is this happening? (Dig deeper into the root cause)", why_number);
 
@@ -253,10 +258,10 @@ impl FrameworkProcessor {
         ];
 
         FrameworkResult {
-            framework: self.framework.clone(),
+            _framework: self.framework.clone(),
             prompts,
             insights: vec![format!("Root cause analysis - Why #{}", why_number)],
-            metadata: Some(serde_json::json!({
+            _metadata: Some(serde_json::json!({
                 "why_number": why_number,
                 "method": "five_whys"
             })),
@@ -264,7 +269,7 @@ impl FrameworkProcessor {
     }
 
     /// SWOT Analysis framework
-    fn process_swot(&self, thought: &str) -> FrameworkResult {
+    fn process_swot(&self, _thought: &str) -> FrameworkResult {
         let prompts = vec![
             "Strengths: What advantages or positive aspects are present?".to_string(),
             "Weaknesses: What limitations or negative aspects exist?".to_string(),
@@ -273,10 +278,10 @@ impl FrameworkProcessor {
         ];
 
         FrameworkResult {
-            framework: self.framework.clone(),
+            _framework: self.framework.clone(),
             prompts,
             insights: vec!["Analyze internal and external factors systematically".to_string()],
-            metadata: Some(serde_json::json!({
+            _metadata: Some(serde_json::json!({
                 "quadrants": ["strengths", "weaknesses", "opportunities", "threats"],
                 "perspective": "strategic"
             })),
@@ -287,10 +292,10 @@ impl FrameworkProcessor {
 /// Result of framework processing
 #[derive(Debug)]
 pub struct FrameworkResult {
-    pub framework: ThinkingFramework,
+    pub _framework: ThinkingFramework,
     pub prompts: Vec<String>,
     pub insights: Vec<String>,
-    pub metadata: Option<serde_json::Value>,
+    pub _metadata: Option<serde_json::Value>,
 }
 
 /// Visual display for frameworks

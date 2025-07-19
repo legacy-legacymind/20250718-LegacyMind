@@ -10,10 +10,12 @@ impl VisualOutput {
         Self
     }
 
-    /// Display thought storage beginning
-    pub fn thought_start(&self, thought_number: i32, total_thoughts: i32) {
-        println!("{} {}{}{}", 
+    /// Display thought storage beginning with instance
+    pub fn thought_start(&self, thought_number: i32, total_thoughts: i32, instance_id: &str) {
+        eprintln!("DEBUG: thought_start called with instance_id: '{}'", instance_id);
+        println!("{} {} {}{}{}", 
             "🧠".blue(),
+            format!("[{}]", instance_id).bright_magenta(),
             "Thought ".bright_blue(),
             format!("{}/{}", thought_number, total_thoughts).bright_white(),
             ":".bright_blue()
@@ -69,10 +71,12 @@ impl VisualOutput {
         }
     }
 
-    /// Display thought storage success
-    pub fn thought_stored(&self, thought_id: &str) {
-        println!("   {} {}", 
+    /// Display thought storage success with instance
+    pub fn thought_stored(&self, thought_id: &str, instance_id: &str) {
+        eprintln!("DEBUG: thought_stored called with instance_id: '{}'", instance_id);
+        println!("   {} {} {}", 
             "✅".bright_green(),
+            format!("[{}]", instance_id).bright_magenta(),
             format!("Stored: {}", Self::truncate_uuid(thought_id)).green()
         );
     }
@@ -86,6 +90,7 @@ impl VisualOutput {
     }
 
     /// Display search results count
+    #[allow(dead_code)]
     pub fn search_results(&self, count: usize, query: &str) {
         if count > 0 {
             println!("{} {} {}", 

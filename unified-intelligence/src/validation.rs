@@ -13,6 +13,7 @@ pub enum ValidationError {
     InvalidThoughtNumber { number: i32, max: i32 },
     
     #[error("Invalid instance ID: {instance_id}")]
+    #[allow(dead_code)]
     InvalidInstanceId { instance_id: String },
     
     #[error("Thought content cannot be empty")]
@@ -90,6 +91,7 @@ impl InputValidator {
         Ok(())
     }
     
+    #[allow(dead_code)]
     pub fn validate_instance_id(&self, instance_id: &str) -> std::result::Result<(), ValidationError> {
         // Check length bounds
         if instance_id.is_empty() || instance_id.len() > 50 {

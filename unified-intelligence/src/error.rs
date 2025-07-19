@@ -13,6 +13,7 @@ pub enum UnifiedIntelligenceError {
     PoolCreation(String),
     
     #[error("Failed to get connection from pool: {0}")]
+    #[allow(dead_code)]
     PoolGet(String),
     
     #[error("Serialization error: {0}")]
@@ -28,9 +29,11 @@ pub enum UnifiedIntelligenceError {
     NotFound(String),
     
     #[error("Invalid action: {0}")]
+    #[allow(dead_code)]
     InvalidAction(String),
     
     #[error("Chain operation failed: {0}")]
+    #[allow(dead_code)]
     ChainOperation(String),
     
     #[error("Search unavailable: {0}")]
@@ -40,6 +43,7 @@ pub enum UnifiedIntelligenceError {
     RateLimit,
     
     #[error("Unauthorized access")]
+    #[allow(dead_code)]
     Unauthorized,
     
     #[error("Internal error: {0}")]

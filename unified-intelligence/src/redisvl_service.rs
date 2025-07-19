@@ -46,6 +46,7 @@ impl RedisVLService {
     }
     
     /// Store a thought with embedding
+    #[allow(dead_code)]
     pub async fn store_thought_embedding(
         &self, 
         thought_id: &str, 
