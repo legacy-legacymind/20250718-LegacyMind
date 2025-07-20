@@ -1,0 +1,34 @@
+2025-07-20 17:54:07,440 - httpx - INFO - HTTP Request: GET http://localhost:6333 "HTTP/1.1 200 OK"
+2025-07-20 17:54:32,654 - httpx - INFO - HTTP Request: GET http://localhost:6333 "HTTP/1.1 200 OK"
+2025-07-20 17:54:32,660 - __main__ - INFO - Sam Embedding Service initialized
+2025-07-20 17:54:32,660 - __main__ - INFO - Setting up Sam's Qdrant collections...
+2025-07-20 17:54:32,662 - httpx - INFO - HTTP Request: GET http://localhost:6333/collections/Sam_identity "HTTP/1.1 404 Not Found"
+2025-07-20 17:54:32,730 - httpx - INFO - HTTP Request: PUT http://localhost:6333/collections/Sam_identity "HTTP/1.1 200 OK"
+2025-07-20 17:54:32,731 - __main__ - INFO - Created Qdrant collection: Sam_identity
+2025-07-20 17:54:32,733 - httpx - INFO - HTTP Request: GET http://localhost:6333/collections/Sam_context "HTTP/1.1 404 Not Found"
+2025-07-20 17:54:32,800 - httpx - INFO - HTTP Request: PUT http://localhost:6333/collections/Sam_context "HTTP/1.1 200 OK"
+2025-07-20 17:54:32,800 - __main__ - INFO - Created Qdrant collection: Sam_context
+2025-07-20 17:54:48,581 - httpx - INFO - HTTP Request: GET http://localhost:6333 "HTTP/1.1 200 OK"
+2025-07-20 17:54:48,588 - __main__ - INFO - Sam Embedding Service initialized
+2025-07-20 17:54:48,588 - __main__ - INFO - Starting Sam embedding scan...
+2025-07-20 17:54:48,588 - __main__ - INFO - Setting up Sam's Qdrant collections...
+2025-07-20 17:54:48,590 - httpx - INFO - HTTP Request: GET http://localhost:6333/collections/Sam_identity "HTTP/1.1 200 OK"
+2025-07-20 17:54:48,591 - __main__ - INFO - Collection Sam_identity already exists
+2025-07-20 17:54:48,593 - httpx - INFO - HTTP Request: GET http://localhost:6333/collections/Sam_context "HTTP/1.1 200 OK"
+2025-07-20 17:54:48,593 - __main__ - INFO - Collection Sam_context already exists
+2025-07-20 17:54:48,596 - httpx - INFO - HTTP Request: POST http://localhost:6333/collections/Sam_identity/points/scroll "HTTP/1.1 200 OK"
+2025-07-20 17:54:48,597 - __main__ - INFO - Found 0 processed items in Sam_identity
+2025-07-20 17:54:48,599 - httpx - INFO - HTTP Request: POST http://localhost:6333/collections/Sam_context/points/scroll "HTTP/1.1 200 OK"
+2025-07-20 17:54:48,600 - __main__ - INFO - Found 0 processed items in Sam_context
+2025-07-20 17:54:48,602 - __main__ - INFO - Retrieved data from Sam:Identity
+2025-07-20 17:54:48,602 - __main__ - WARNING - Key Sam:Context:BrainDump does not exist
+2025-07-20 17:54:48,603 - __main__ - INFO - Retrieved data from Sam:Context:Expectations
+2025-07-20 17:54:48,603 - __main__ - INFO - Processing 2 new items
+2025-07-20 17:54:48,603 - __main__ - INFO - Processing batch 1: 2 items
+2025-07-20 17:54:49,401 - httpx - INFO - HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+2025-07-20 17:54:49,441 - __main__ - INFO - Generated 2 embeddings
+2025-07-20 17:54:49,448 - httpx - INFO - HTTP Request: PUT http://localhost:6333/collections/Sam_identity/points?wait=true "HTTP/1.1 200 OK"
+2025-07-20 17:54:49,450 - __main__ - INFO - Stored 1 items in Sam_identity
+2025-07-20 17:54:49,456 - httpx - INFO - HTTP Request: PUT http://localhost:6333/collections/Sam_context/points?wait=true "HTTP/1.1 200 OK"
+2025-07-20 17:54:49,456 - __main__ - INFO - Stored 1 items in Sam_context
+2025-07-20 17:54:52,465 - __main__ - INFO - Scan completed in 3.9s: 2 items processed, 2 embeddings generated, 2 Qdrant writes, 0 errors

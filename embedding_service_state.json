@@ -1,13 +1,13 @@
 {
-  "last_run": "2025-07-20T13:08:02.373499",
+  "last_run": "2025-07-20T17:54:57.788234",
   "stats": {
-    "total_thoughts_found": 4129662,
-    "new_thoughts_processed": 185,
-    "embeddings_generated": 185,
-    "qdrant_writes": 185,
+    "total_thoughts_found": 5479233,
+    "new_thoughts_processed": 605,
+    "embeddings_generated": 605,
+    "qdrant_writes": 605,
     "errors": 0,
-    "start_time": "2025-07-20 13:08:00.637596",
-    "last_run": "2025-07-20 13:08:02.372961"
+    "start_time": "2025-07-20 17:54:55.627517",
+    "last_run": "2025-07-20 17:54:57.787644"
   },
   "instances_processed": [
     "CC",
