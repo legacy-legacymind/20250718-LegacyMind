@@ -9,7 +9,7 @@ use rmcp_macros::{tool, tool_handler, tool_router};
 use tracing;
 
 use crate::error::UnifiedIntelligenceError;
-use crate::models::{UiThinkParams, UiRecallParams, UiRecallFeedbackParams, UiIdentityParams, UiDebugEnvParams};
+use crate::models::{UiThinkParams, UiIdentityParams, UiSearchParams};
 use crate::redis::RedisManager;
 use crate::repository::RedisThoughtRepository;
 use crate::handlers::ToolHandlers;
@@ -124,10 +124,10 @@ impl UnifiedIntelligenceService {
         }
     }
     
-    #[tool(description = "Search, retrieve, and manipulate stored thoughts")]
-    pub async fn ui_recall(
+    #[tool(description = "Search for thoughts by content or retrieve all thoughts from a chain")]
+    pub async fn ui_search(
         &self,
-        params: Parameters<UiRecallParams>,
+        params: Parameters<UiSearchParams>,
     ) -> std::result::Result<CallToolResult, ErrorData> {
         // Check rate limit
         if let Err(e) = self.rate_limiter.check_rate_limit(&self.instance_id).await {
@@ -138,41 +138,14 @@ impl UnifiedIntelligenceService {
             ));
         }
         
-        match self.handlers.ui_recall(params.0).await {
+        match self.handlers.ui_search(params.0).await {
             Ok(response) => {
                 let content = Content::json(response)
                     .map_err(|e| ErrorData::internal_error(format!("Failed to create JSON content: {}", e), None))?;
                 Ok(CallToolResult::success(vec![content]))
             },
             Err(e) => {
-                tracing::error!("ui_recall error: {}", e);
-                Err(ErrorData::internal_error(e.to_string(), None))
-            }
-        }
-    }
-    
-    #[tool(description = "Record feedback on search results to improve future searches")]
-    pub async fn ui_recall_feedback(
-        &self,
-        params: Parameters<UiRecallFeedbackParams>,
-    ) -> std::result::Result<CallToolResult, ErrorData> {
-        // Check rate limit
-        if let Err(e) = self.rate_limiter.check_rate_limit(&self.instance_id).await {
-            tracing::warn!("Rate limit hit for instance {}: {}", self.instance_id, e);
-            return Err(ErrorData::invalid_params(
-                format!("Rate limit exceeded. Please slow down your requests."), 
-                None
-            ));
-        }
-        
-        match self.handlers.ui_recall_feedback(params.0).await {
-            Ok(response) => {
-                let content = Content::json(response)
-                    .map_err(|e| ErrorData::internal_error(format!("Failed to create JSON content: {}", e), None))?;
-                Ok(CallToolResult::success(vec![content]))
-            },
-            Err(e) => {
-                tracing::error!("ui_recall_feedback error: {}", e);
+                tracing::error!("ui_search error: {}", e);
                 Err(ErrorData::internal_error(e.to_string(), None))
             }
         }
@@ -200,24 +173,6 @@ impl UnifiedIntelligenceService {
             },
             Err(e) => {
                 tracing::error!("ui_identity error: {}", e);
-                Err(ErrorData::internal_error(e.to_string(), None))
-            }
-        }
-    }
-    
-    #[tool(description = "Debug tool to view masked environment variables (OPENAI_API_KEY, REDIS_PASSWORD, INSTANCE_ID)")]
-    pub async fn ui_debug_env(
-        &self,
-        params: Parameters<UiDebugEnvParams>,
-    ) -> std::result::Result<CallToolResult, ErrorData> {
-        match self.handlers.ui_debug_env(params.0).await {
-            Ok(response) => {
-                let content = Content::json(response)
-                    .map_err(|e| ErrorData::internal_error(format!("Failed to create JSON content: {}", e), None))?;
-                Ok(CallToolResult::success(vec![content]))
-            },
-            Err(e) => {
-                tracing::error!("ui_debug_env error: {}", e);
                 Err(ErrorData::internal_error(e.to_string(), None))
             }
         }

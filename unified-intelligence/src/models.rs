@@ -37,23 +37,20 @@ pub struct UiThinkParams {
     pub category: Option<String>,
 }
 
-/// Parameters for the ui_recall tool
+/// Parameters for the ui_search tool
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct UiRecallParams {
-    #[schemars(description = "Search query to find thoughts (e.g., 'Redis performance')")]
+pub struct UiSearchParams {
+    #[schemars(description = "Search mode: 'thought' for content search, 'chain' for chain ID search")]
+    pub mode: String,
+    
+    #[schemars(description = "Search query for thought mode (e.g., 'Redis performance')")]
     pub query: Option<String>,
     
-    #[schemars(description = "Chain ID to retrieve thoughts from (use this OR query, not both)")]
+    #[schemars(description = "Chain ID for chain mode (e.g., 'handoff-session-summary-redis')")]
     pub chain_id: Option<String>,
     
     #[schemars(description = "Maximum number of results to return (default: 50)")]
     pub limit: Option<usize>,
-    
-    #[schemars(description = "Action to perform on results: search, merge, analyze, branch, continue")]
-    pub action: Option<String>,
-    
-    #[schemars(description = "Additional parameters for the action (JSON object)")]
-    pub action_params: Option<serde_json::Value>,
     
     #[schemars(description = "Use semantic similarity search instead of text search (default: false)")]
     pub semantic_search: Option<bool>,
@@ -64,7 +61,6 @@ pub struct UiRecallParams {
     #[schemars(description = "Search across all instances instead of just current instance (default: false)")]
     pub search_all_instances: Option<bool>,
     
-    // PHASE 2 FEEDBACK LOOP ENHANCEMENTS
     #[schemars(description = "Filter results by tags (e.g., ['redis', 'architecture'])")]
     pub tags_filter: Option<Vec<String>>,
     
@@ -76,25 +72,6 @@ pub struct UiRecallParams {
     
     #[schemars(description = "Filter by category: 'technical', 'strategic', 'operational', 'relationship'")]
     pub category_filter: Option<String>,
-}
-
-/// Parameters for the ui_recall_feedback tool (Phase 2)
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct UiRecallFeedbackParams {
-    #[schemars(description = "Search session ID from ui_recall response")]
-    pub search_id: String,
-    
-    #[schemars(description = "ID of the thought being given feedback on")]
-    pub thought_id: String,
-    
-    #[schemars(description = "Action taken: 'viewed', 'used', 'irrelevant', 'helpful'")]
-    pub action: String,
-    
-    #[schemars(description = "Time spent viewing the thought in seconds")]
-    pub dwell_time: Option<i32>,
-    
-    #[schemars(description = "Optional explicit relevance rating (1-10)")]
-    pub relevance_rating: Option<i32>,
 }
 
 /// Core thought record structure stored in Redis
@@ -178,26 +155,15 @@ pub struct ThinkResponse {
     pub next_thought_needed: bool,
 }
 
-/// Response from ui_recall tool  
+/// Response from ui_search tool  
 #[derive(Debug, Serialize)]
-pub struct RecallResponse {
+pub struct SearchResponse {
+    pub mode: String,  // "thought" or "chain"
     pub thoughts: Vec<ThoughtRecord>,
     pub total_found: usize,
     pub search_method: String,
     pub search_available: bool,
-    pub action: Option<String>,
-    pub action_result: Option<serde_json::Value>,
-    // PHASE 2 FEEDBACK LOOP ENHANCEMENT
-    pub search_id: String,  // For tracking this search session
-}
-
-/// Response from ui_recall_feedback tool  
-#[derive(Debug, Serialize)]
-pub struct FeedbackResponse {
-    pub status: String,
-    pub search_id: String,
-    pub thought_id: String,
-    pub recorded_at: String,
+    pub search_id: String,  // Session ID for tracking
 }
 
 /// Chain metadata stored in Redis
@@ -236,12 +202,6 @@ pub enum IdentityOperation {
     Modify,    // Change existing value
     Delete,    // Remove from list/map
     Help,      // Show comprehensive help documentation
-}
-
-/// Parameters for the ui_debug_env tool
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct UiDebugEnvParams {
-    // No parameters needed for this tool
 }
 
 /// Parameters for the mind_monitor_status tool
@@ -292,14 +252,6 @@ pub struct MindEntityTrackingParams {
     
     #[schemars(description = "Include enrichment suggestions (default: false)")]
     pub include_enrichment: Option<bool>,
-}
-
-/// Response from ui_debug_env tool
-#[derive(Debug, Serialize)]
-pub struct DebugEnvResponse {
-    pub openai_api_key: String,    // Masked value
-    pub redis_password: String,    // Masked value
-    pub instance_id: Option<String>, // Full value shown
 }
 
 /// Response from mind_monitor_status tool

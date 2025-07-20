@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::error::Result;
-use crate::models::{ThoughtRecord, ChainMetadata, Identity, ThoughtMetadata, UiRecallFeedbackParams};
+use crate::models::{ThoughtRecord, ChainMetadata, Identity, ThoughtMetadata};
 use crate::redis::RedisManager;
 use crate::search_optimization::SearchCache;
 // use crate::embeddings::EmbeddingGenerator;
@@ -106,9 +106,6 @@ pub trait ThoughtRepository: Send + Sync {
         min_relevance: Option<i32>,
         category_filter: Option<String>,
     ) -> Result<Vec<ThoughtRecord>>;
-    
-    /// Record feedback for search result
-    async fn record_feedback(&self, feedback: &UiRecallFeedbackParams, instance: &str) -> Result<()>;
     
     /// Generate unique search ID for tracking
     async fn generate_search_id(&self) -> Result<String>;
@@ -827,36 +824,6 @@ impl ThoughtRepository for RedisThoughtRepository {
         
         thoughts.truncate(limit);
         Ok(thoughts)
-    }
-    
-    async fn record_feedback(&self, feedback: &UiRecallFeedbackParams, instance: &str) -> Result<()> {
-        // Store feedback event in Redis Stream for background processing
-        let feedback_event = serde_json::json!({
-            "event_type": "feedback_provided",
-            "search_id": feedback.search_id,
-            "thought_id": feedback.thought_id,
-            "instance": instance,
-            "action": feedback.action,
-            "dwell_time": feedback.dwell_time,
-            "relevance_rating": feedback.relevance_rating,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-        });
-        
-        self.publish_feedback_event(&feedback_event).await?;
-        
-        // Update boost score immediately (Phase 3 enhancement)
-        let new_score = self.update_boost_score(
-            instance,
-            &feedback.thought_id,
-            &feedback.action,
-            feedback.relevance_rating,
-            feedback.dwell_time,
-        ).await?;
-        
-        tracing::info!("Recorded feedback for search {} thought {} action {} - new boost score: {}", 
-            feedback.search_id, feedback.thought_id, feedback.action, new_score);
-        
-        Ok(())
     }
     
     async fn generate_search_id(&self) -> Result<String> {

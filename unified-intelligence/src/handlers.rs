@@ -4,10 +4,10 @@ use tracing;
 
 use crate::error::{Result, UnifiedIntelligenceError};
 use crate::models::{
-    UiThinkParams, UiRecallParams, UiIdentityParams, UiDebugEnvParams, ThoughtRecord, ThinkResponse, 
-    RecallResponse, ChainMetadata, IdentityResponse, IdentityOperation, Identity, DebugEnvResponse,
-    OperationHelp, CategoryHelp, FieldTypeHelp, ExampleUsage, ThoughtMetadata, UiRecallFeedbackParams,
-    FeedbackResponse, MindMonitorStatusParams, MindMonitorStatusResponse, MindCognitiveMetricsParams,
+    UiThinkParams, UiSearchParams, UiIdentityParams, ThoughtRecord, ThinkResponse, 
+    SearchResponse, ChainMetadata, IdentityResponse, IdentityOperation, Identity,
+    OperationHelp, CategoryHelp, FieldTypeHelp, ExampleUsage, ThoughtMetadata,
+    MindMonitorStatusParams, MindMonitorStatusResponse, MindCognitiveMetricsParams,
     MindCognitiveMetricsResponse, MindInterventionQueueParams, MindInterventionQueueResponse,
     InterventionDetail, MindConversationInsightsParams, MindConversationInsightsResponse,
     MindEntityTrackingParams, MindEntityTrackingResponse, TrackedEntity, RelationshipDynamics
@@ -178,153 +178,129 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         })
     }
     
-    /// Handle ui_recall tool (Phase 2 Enhanced)
-    pub async fn ui_recall(&self, params: UiRecallParams) -> Result<RecallResponse> {
-        let action = params.action.as_deref().unwrap_or("search");
+    /// Handle ui_search tool - unified search for thoughts and chains
+    pub async fn ui_search(&self, params: UiSearchParams) -> Result<SearchResponse> {
+        // Validate mode parameter
+        match params.mode.as_str() {
+            "thought" | "chain" => {},
+            _ => {
+                return Err(UnifiedIntelligenceError::Validation {
+                    field: "mode".to_string(),
+                    reason: "Mode must be either 'thought' or 'chain'".to_string(),
+                });
+            }
+        }
+        
         let limit = params.limit.unwrap_or(50);
         
-        // Generate search ID for tracking (Phase 2 feature)
+        // Generate search ID for tracking
         let search_id = self.repository.generate_search_id().await?;
         
         tracing::info!(
-            "Recall action '{}' for instance '{}' with query: {:?}, chain: {:?}, search_id: {}",
-            action, self.instance_id, params.query, params.chain_id, search_id
+            "Search mode '{}' for instance '{}' with query: {:?}, chain: {:?}, search_id: {}",
+            params.mode, self.instance_id, params.query, params.chain_id, search_id
         );
         
-        // Check if any Phase 2 metadata filters are applied
+        // Check if any metadata filters are applied
         let has_metadata_filters = params.tags_filter.is_some() || 
             params.min_importance.is_some() || 
             params.min_relevance.is_some() || 
             params.category_filter.is_some();
         
-        // Get thoughts based on query or chain_id
-        let thoughts = if let Some(chain_id) = &params.chain_id {
-            self.repository.get_chain_thoughts(&self.instance_id, chain_id).await?
-        } else if let Some(query) = &params.query {
-            let search_all_instances = params.search_all_instances.unwrap_or(false);
-            
-            if params.semantic_search.unwrap_or(false) {
-                // Use semantic search via repository with configurable threshold
-                let threshold = params.threshold.unwrap_or(0.5); // Standardized threshold for improved embedding quality
-                tracing::info!("Handler semantic search - threshold: {}, global: {}, enhanced: {}", 
-                    threshold, search_all_instances, has_metadata_filters);
+        // Get thoughts based on mode
+        let thoughts = match params.mode.as_str() {
+            "chain" => {
+                // Chain mode - require chain_id
+                let chain_id = params.chain_id.ok_or_else(|| UnifiedIntelligenceError::Validation {
+                    field: "chain_id".to_string(),
+                    reason: "chain_id is required for chain mode".to_string(),
+                })?;
+                self.repository.get_chain_thoughts(&self.instance_id, &chain_id).await?
+            }
+            "thought" => {
+                // Thought mode - require query
+                let query = params.query.as_ref().ok_or_else(|| UnifiedIntelligenceError::Validation {
+                    field: "query".to_string(),
+                    reason: "query is required for thought mode".to_string(),
+                })?;
+                let search_all_instances = params.search_all_instances.unwrap_or(false);
                 
-                // Use enhanced search methods if metadata filters are provided (Phase 2)
-                if has_metadata_filters {
-                    if search_all_instances {
-                        self.repository.search_thoughts_semantic_global_enhanced(
-                            query, 
-                            limit, 
-                            threshold,
-                            params.tags_filter.clone(),
-                            params.min_importance,
-                            params.min_relevance,
-                            params.category_filter.clone(),
-                        ).await?
+                if params.semantic_search.unwrap_or(false) {
+                    // Use semantic search via repository with configurable threshold
+                    let threshold = params.threshold.unwrap_or(0.5);
+                    tracing::info!("Semantic search - threshold: {}, global: {}", threshold, search_all_instances);
+                    
+                    // Use enhanced search methods if metadata filters are provided
+                    if has_metadata_filters {
+                        if search_all_instances {
+                            self.repository.search_thoughts_semantic_global_enhanced(
+                                query, 
+                                limit, 
+                                threshold,
+                                params.tags_filter.clone(),
+                                params.min_importance,
+                                params.min_relevance,
+                                params.category_filter.clone(),
+                            ).await?
+                        } else {
+                            self.repository.search_thoughts_semantic_enhanced(
+                                &self.instance_id,
+                                query, 
+                                limit, 
+                                threshold,
+                                params.tags_filter.clone(),
+                                params.min_importance,
+                                params.min_relevance,
+                                params.category_filter.clone(),
+                            ).await?
+                        }
                     } else {
-                        self.repository.search_thoughts_semantic_enhanced(
-                            &self.instance_id,
-                            query, 
-                            limit, 
-                            threshold,
-                            params.tags_filter.clone(),
-                            params.min_importance,
-                            params.min_relevance,
-                            params.category_filter.clone(),
-                        ).await?
+                        // Use standard semantic search
+                        let mut thoughts = if search_all_instances {
+                            self.repository.search_thoughts_semantic_global(query, limit, threshold).await?
+                        } else {
+                            self.repository.search_thoughts_semantic(&self.instance_id, query, limit, threshold).await?
+                        };
+                        
+                        // Apply boost scores to improve ranking
+                        if !search_all_instances {
+                            self.repository.apply_boost_scores(&self.instance_id, &mut thoughts).await?;
+                        }
+                        
+                        thoughts
                     }
                 } else {
-                    // Use standard semantic search
+                    // Use regular text search
+                    tracing::info!("Handler text search - global: {}", search_all_instances);
+                    
                     let mut thoughts = if search_all_instances {
-                        self.repository.search_thoughts_semantic_global(query, limit, threshold).await?
+                        self.repository.search_thoughts_global(query, limit).await?
                     } else {
-                        self.repository.search_thoughts_semantic(&self.instance_id, query, limit, threshold).await?
+                        self.repository.search_thoughts(&self.instance_id, query, limit).await?
                     };
                     
-                    // Apply boost scores to improve ranking (Phase 3)
+                    // Apply boost scores for local searches
                     if !search_all_instances {
                         self.repository.apply_boost_scores(&self.instance_id, &mut thoughts).await?;
                     }
                     
                     thoughts
                 }
-            } else {
-                // Use regular text search (Phase 2 filters not supported for text search yet)
-                tracing::info!("Handler text search - global: {}", search_all_instances);
-                
-                let mut thoughts = if search_all_instances {
-                    self.repository.search_thoughts_global(query, limit).await?
-                } else {
-                    self.repository.search_thoughts(&self.instance_id, query, limit).await?
-                };
-                
-                // Apply boost scores to text search results too (Phase 3)
-                if !search_all_instances {
-                    self.repository.apply_boost_scores(&self.instance_id, &mut thoughts).await?;
-                }
-                
-                thoughts
             }
-        } else {
-            let search_all_instances = params.search_all_instances.unwrap_or(false);
-            
-            if search_all_instances {
-                self.repository.get_all_thoughts(limit).await?
-            } else {
-                self.repository.get_instance_thoughts(&self.instance_id, limit).await?
-            }
+            _ => unreachable!(), // Already validated
         };
         
         let total_found = thoughts.len();
         
-        // Process action
-        let (action_result, final_thoughts) = match action {
-            "analyze" => {
-                let analysis = self.analyze_thoughts(&thoughts).await?;
-                (Some(analysis), thoughts)
-            },
-            "merge" => {
-                if let Some(target_chain) = params.action_params.as_ref()
-                    .and_then(|p| p.get("target_chain_id"))
-                    .and_then(|v| v.as_str()) {
-                    let result = self.merge_chains(&params.chain_id.unwrap_or_default(), target_chain).await?;
-                    (Some(result), thoughts)
-                } else {
-                    return Err(UnifiedIntelligenceError::Validation {
-                        field: "action_params.target_chain_id".to_string(),
-                        reason: "Required for merge action".to_string(),
-                    });
-                }
-            },
-            "branch" => {
-                if let Some(thought_id) = params.action_params.as_ref()
-                    .and_then(|p| p.get("thought_id"))
-                    .and_then(|v| v.as_str()) {
-                    let result = self.branch_from_thought(thought_id).await?;
-                    (Some(result), thoughts)
-                } else {
-                    return Err(UnifiedIntelligenceError::Validation {
-                        field: "action_params.thought_id".to_string(),
-                        reason: "Required for branch action".to_string(),
-                    });
-                }
-            },
-            "continue" => {
-                if let Some(chain_id) = &params.chain_id {
-                    let result = self.continue_chain(chain_id).await?;
-                    (Some(result), thoughts)
-                } else {
-                    return Err(UnifiedIntelligenceError::Validation {
-                        field: "chain_id".to_string(),
-                        reason: "Required for continue action".to_string(),
-                    });
-                }
-            },
-            _ => (None, thoughts), // Default search action
+        // Apply limit if thoughts exceed it
+        let final_thoughts = if thoughts.len() > limit {
+            thoughts.into_iter().take(limit).collect()
+        } else {
+            thoughts
         };
         
-        // Publish search performed event for background analysis (Phase 2)
-        if params.query.is_some() {
+        // Publish search event for tracking
+        if params.mode == "thought" {
             let search_event = json!({
                 "event_type": "search_performed",
                 "search_id": search_id,
@@ -346,10 +322,13 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             }
         }
 
-        Ok(RecallResponse {
+        Ok(SearchResponse {
+            mode: params.mode,
             thoughts: final_thoughts,
             total_found,
-            search_method: if params.semantic_search.unwrap_or(false) {
+            search_method: if params.mode == "chain" {
+                "chain_lookup".to_string()
+            } else if params.semantic_search.unwrap_or(false) {
                 if has_metadata_filters {
                     "enhanced_semantic_search".to_string()
                 } else {
@@ -361,9 +340,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
                 "fallback_scan".to_string()
             },
             search_available: self.search_available.load(std::sync::atomic::Ordering::SeqCst),
-            action: Some(action.to_string()),
-            action_result,
-            search_id, // Phase 2 enhancement
+            search_id,
         })
     }
     
@@ -1212,89 +1189,6 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             field_types,
             examples,
         }
-    }
-    
-    /// Handle ui_debug_env tool - returns masked environment variables
-    pub async fn ui_debug_env(&self, _params: UiDebugEnvParams) -> Result<DebugEnvResponse> {
-        tracing::info!("Debug environment request for instance '{}'", self.instance_id);
-        
-        // Get environment variables
-        let openai_api_key = std::env::var("OPENAI_API_KEY").unwrap_or_else(|_| "NOT_SET".to_string());
-        let redis_password = std::env::var("REDIS_PASSWORD").unwrap_or_else(|_| "NOT_SET".to_string());
-        let instance_id = std::env::var("INSTANCE_ID").ok();
-        
-        // Mask sensitive values
-        let masked_openai_key = if openai_api_key != "NOT_SET" && openai_api_key.len() > 8 {
-            format!("{}...{}", &openai_api_key[..4], &openai_api_key[openai_api_key.len()-4..])
-        } else {
-            openai_api_key
-        };
-        
-        let masked_redis_password = if redis_password != "NOT_SET" && redis_password.len() > 6 {
-            format!("{}...{}", &redis_password[..3], &redis_password[redis_password.len()-3..])
-        } else {
-            redis_password
-        };
-        
-        Ok(DebugEnvResponse {
-            openai_api_key: masked_openai_key,
-            redis_password: masked_redis_password,
-            instance_id,
-        })
-    }
-    
-    /// Handle ui_recall_feedback tool - record feedback on search results (Phase 2)
-    pub async fn ui_recall_feedback(&self, params: UiRecallFeedbackParams) -> Result<FeedbackResponse> {
-        tracing::info!(
-            "Recording feedback for search '{}', thought '{}', action '{}' for instance '{}'",
-            params.search_id, params.thought_id, params.action, self.instance_id
-        );
-        
-        // Validate action parameter
-        match params.action.as_str() {
-            "viewed" | "used" | "irrelevant" | "helpful" => {},
-            _ => {
-                return Err(UnifiedIntelligenceError::Validation {
-                    field: "action".to_string(),
-                    reason: "Action must be one of: 'viewed', 'used', 'irrelevant', 'helpful'".to_string(),
-                });
-            }
-        }
-        
-        // Validate dwell_time if provided
-        if let Some(dwell_time) = params.dwell_time {
-            if dwell_time < 0 {
-                return Err(UnifiedIntelligenceError::Validation {
-                    field: "dwell_time".to_string(),
-                    reason: "Dwell time must be positive".to_string(),
-                });
-            }
-        }
-        
-        // Validate relevance_rating if provided
-        if let Some(rating) = params.relevance_rating {
-            if rating < 1 || rating > 10 {
-                return Err(UnifiedIntelligenceError::Validation {
-                    field: "relevance_rating".to_string(),
-                    reason: "Relevance rating must be between 1 and 10".to_string(),
-                });
-            }
-        }
-        
-        // Record feedback via repository
-        self.repository.record_feedback(&params, &self.instance_id).await?;
-        
-        let recorded_at = chrono::Utc::now().to_rfc3339();
-        
-        tracing::info!("Successfully recorded feedback for search {} thought {}", 
-            params.search_id, params.thought_id);
-        
-        Ok(FeedbackResponse {
-            status: "recorded".to_string(),
-            search_id: params.search_id,
-            thought_id: params.thought_id,
-            recorded_at,
-        })
     }
     
     /// Handle mind_monitor_status tool - Get current monitoring status and metrics
