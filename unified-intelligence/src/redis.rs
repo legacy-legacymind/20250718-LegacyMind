@@ -13,6 +13,9 @@ use chrono;
 use crate::error::{Result, UnifiedIntelligenceError};
 use crate::lua_scripts::{self, LoadedScripts};
 
+/// Default TTL for all Redis writes (7 days in seconds)
+const DEFAULT_TTL_SECONDS: i64 = 604800;
+
 /// Redis connection manager
 #[derive(Clone)]
 pub struct RedisManager {
@@ -106,8 +109,8 @@ impl RedisManager {
     pub async fn store_api_key(&self, key_name: &str, api_key: &str) -> Result<()> {
         let mut conn = self.get_connection().await?;
         
-        // Store with a 24-hour expiration (can be refreshed on service restart)
-        conn.set_ex(format!("config:{}", key_name), api_key, 86400).await?;
+        // Store with a 7-day expiration
+        conn.set_ex(format!("config:{}", key_name), api_key, DEFAULT_TTL_SECONDS as u64).await?;
         
         tracing::debug!("Stored API key '{}' in Redis", key_name);
         Ok(())
@@ -182,6 +185,9 @@ impl RedisManager {
     ) -> Result<()> {
         let mut conn = self.get_connection().await?;
         conn.json_set(key, path, value).await?;
+        
+        // Set TTL for the key (7 days)
+        conn.expire(key, DEFAULT_TTL_SECONDS).await?;
         Ok(())
     }
     
@@ -266,6 +272,9 @@ impl RedisManager {
     pub async fn zadd(&self, key: &str, member: &str, score: f64) -> Result<()> {
         let mut conn = self.get_connection().await?;
         conn.zadd(key, member, score).await?;
+        
+        // Set TTL for the key (7 days)
+        conn.expire(key, DEFAULT_TTL_SECONDS).await?;
         Ok(())
     }
     
@@ -279,6 +288,9 @@ impl RedisManager {
     pub async fn sadd(&self, key: &str, member: &str) -> Result<()> {
         let mut conn = self.get_connection().await?;
         conn.sadd(key, member).await?;
+        
+        // Set TTL for the key (7 days)
+        conn.expire(key, DEFAULT_TTL_SECONDS).await?;
         Ok(())
     }
     

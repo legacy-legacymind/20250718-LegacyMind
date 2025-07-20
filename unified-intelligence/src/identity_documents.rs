@@ -255,29 +255,6 @@ pub mod conversion {
         
         Ok(documents)
     }
-    
-    /// Convert document-based format back to monolithic JSON
-    pub fn documents_to_monolithic(documents: Vec<IdentityDocument>) -> Value {
-        let mut result = serde_json::Map::new();
-        let mut relationships = serde_json::Map::new();
-        
-        for doc in documents {
-            if doc.field_type.starts_with("relationships:") {
-                // Extract person name from relationships:person format
-                let person = doc.field_type.strip_prefix("relationships:")
-                    .unwrap_or(&doc.field_type);
-                relationships.insert(person.to_string(), doc.content);
-            } else {
-                result.insert(doc.field_type.clone(), doc.content);
-            }
-        }
-        
-        if !relationships.is_empty() {
-            result.insert("relationships".to_string(), Value::Object(relationships));
-        }
-        
-        Value::Object(result)
-    }
 }
 
 #[cfg(test)]
@@ -334,26 +311,6 @@ mod tests {
         assert_eq!(relationship_doc.content["type"], "user");
     }
     
-    #[test]
-    fn test_documents_to_monolithic_conversion() {
-        let docs = vec![
-            IdentityDocument::new(
-                "basics".to_string(),
-                json!({"name": "Claude"}),
-                "CCI".to_string(),
-            ),
-            IdentityDocument::new(
-                "relationships:Sam".to_string(),
-                json!({"type": "user", "trust": "high"}),
-                "CCI".to_string(),
-            ),
-        ];
-        
-        let monolithic = conversion::documents_to_monolithic(docs);
-        
-        assert_eq!(monolithic["basics"]["name"], "Claude");
-        assert_eq!(monolithic["relationships"]["Sam"]["type"], "user");
-    }
     
     #[test]
     fn test_identity_index_operations() {

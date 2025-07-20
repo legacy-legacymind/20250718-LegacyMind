@@ -98,7 +98,7 @@ class BackgroundEmbeddingService:
         self.openai_client = openai.OpenAI(api_key=openai_api_key)
         
         # Known instances to process
-        self.instances = ["CC", "CCI", "CCD", "CCS", "DT"]
+        self.instances = ["CC", "CCI", "CCD", "CCS", "DT", "CCB"]
         
         # State management
         self.running = True

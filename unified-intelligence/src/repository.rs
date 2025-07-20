@@ -1115,25 +1115,41 @@ impl ThoughtRepository for RedisThoughtRepository {
     
     async fn get_all_identity_documents(&self, instance_id: &str) -> Result<Vec<IdentityDocument>> {
         let pattern = format!("{}:identity:*:*", instance_id);
+        tracing::info!("🔍 Scanning for identity documents with pattern: {}", pattern);
+        
         let keys: Vec<String> = self.redis.scan_match(&pattern, 1000).await?;
+        tracing::info!("🔍 Found {} keys matching pattern", keys.len());
+        
+        if keys.len() > 0 {
+            tracing::info!("🔍 First few keys: {:?}", keys.iter().take(3).collect::<Vec<_>>());
+        }
         
         let mut documents = Vec::new();
         
         for key in keys {
             // Skip index keys
             if key.ends_with(":index") {
+                tracing::info!("🔍 Skipping index key: {}", key);
                 continue;
             }
             
+            tracing::info!("🔍 Processing key: {}", key);
             if let Some(value) = self.redis.json_get(&key, ".").await? {
-                let doc: IdentityDocument = serde_json::from_value(value)?;
-                documents.push(doc);
+                match serde_json::from_value::<IdentityDocument>(value) {
+                    Ok(doc) => {
+                        tracing::info!("🔍 Successfully parsed document from key: {}", key);
+                        documents.push(doc);
+                    },
+                    Err(e) => {
+                        tracing::error!("🔍 Failed to parse document from key {}: {}", key, e);
+                    }
+                }
+            } else {
+                tracing::warn!("🔍 No data found for key: {}", key);
             }
         }
         
-        // Sort by creation date (newest first)
-        documents.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-        
+        tracing::info!("🔍 Total documents parsed: {}", documents.len());
         Ok(documents)
     }
     

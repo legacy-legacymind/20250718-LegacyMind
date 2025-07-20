@@ -1,19 +1,20 @@
 {
-  "last_run": "2025-07-19T16:45:10.163537",
+  "last_run": "2025-07-20T13:08:02.373499",
   "stats": {
-    "total_thoughts_found": 22387,
-    "new_thoughts_processed": 92,
-    "embeddings_generated": 92,
-    "qdrant_writes": 92,
+    "total_thoughts_found": 4129662,
+    "new_thoughts_processed": 185,
+    "embeddings_generated": 185,
+    "qdrant_writes": 185,
     "errors": 0,
-    "start_time": "2025-07-19 16:45:09.074476",
-    "last_run": "2025-07-19 16:45:10.163012"
+    "start_time": "2025-07-20 13:08:00.637596",
+    "last_run": "2025-07-20 13:08:02.372961"
   },
   "instances_processed": [
     "CC",
     "CCI",
     "CCD",
     "CCS",
-    "DT"
+    "DT",
+    "CCB"
   ]
 }

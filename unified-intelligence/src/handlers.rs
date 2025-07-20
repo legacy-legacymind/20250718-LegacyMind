@@ -10,7 +10,7 @@ use crate::models::{
     FeedbackResponse, MindMonitorStatusParams, MindMonitorStatusResponse, MindCognitiveMetricsParams,
     MindCognitiveMetricsResponse, MindInterventionQueueParams, MindInterventionQueueResponse,
     InterventionDetail, MindConversationInsightsParams, MindConversationInsightsResponse,
-    MindEntityTrackingParams, MindEntityTrackingResponse, TrackedEntity
+    MindEntityTrackingParams, MindEntityTrackingResponse, TrackedEntity, RelationshipDynamics
 };
 use crate::repository::ThoughtRepository;
 #[cfg(not(test))]
@@ -663,9 +663,28 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             
             Ok(default_identity)
         } else {
-            // Convert documents back to monolithic format for response
-            let identity_json = crate::identity_documents::conversion::documents_to_monolithic(documents);
-            let identity: Identity = serde_json::from_value(identity_json)?;
+            // Build identity from documents directly
+            let mut identity = Identity::default_for_instance(&self.instance_id);
+            
+            for doc in documents {
+                match doc.field_type.as_str() {
+                    "core_info" => identity.core_info = serde_json::from_value(doc.content)?,
+                    "communication" => identity.communication = serde_json::from_value(doc.content)?,
+                    "work_preferences" => identity.work_preferences = serde_json::from_value(doc.content)?,
+                    "behavioral_patterns" => identity.behavioral_patterns = serde_json::from_value(doc.content)?,
+                    "technical_profile" => identity.technical_profile = serde_json::from_value(doc.content)?,
+                    "context_awareness" => identity.context_awareness = serde_json::from_value(doc.content)?,
+                    "memory_preferences" => identity.memory_preferences = serde_json::from_value(doc.content)?,
+                    "metadata" => identity.metadata = serde_json::from_value(doc.content)?,
+                    field if field.starts_with("relationships:") => {
+                        let person = field.strip_prefix("relationships:").unwrap_or(field);
+                        let dynamics: RelationshipDynamics = serde_json::from_value(doc.content)?;
+                        identity.relationships.insert(person.to_string(), dynamics);
+                    }
+                    _ => {} // Ignore unknown fields
+                }
+            }
+            
             Ok(identity)
         }
     }

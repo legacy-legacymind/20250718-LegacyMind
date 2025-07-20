@@ -1,25 +1,21 @@
-# Rust build artifacts
-/target/
+# Rust
+target/
 Cargo.lock
+**/*.rs.bk
 
-# IDE files
+# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-*~
 
-# OS files
+# OS
 .DS_Store
 Thumbs.db
 
-# Environment files
+# Environment
 .env
 .env.local
 
 # Logs
 *.log
-
-# Test coverage
-tarpaulin-report.html
-cobertura.xml
