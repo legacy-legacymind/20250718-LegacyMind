@@ -131,6 +131,46 @@ impl RedisClient {
         debug!("Cached embedding for text: {} (TTL: {}s)", text, ttl_seconds);
         Ok(())
     }
+    
+    pub async fn hset_all(
+        &self,
+        key: &str,
+        fields: std::collections::HashMap<String, String>,
+    ) -> Result<()> {
+        let mut conn = self.get_connection().await?;
+        for (field, value) in fields {
+            conn.hset::<_, _, _, ()>(key, field, value).await?;
+        }
+        Ok(())
+    }
+    
+    pub async fn expire(&self, key: &str, seconds: u64) -> Result<()> {
+        let mut conn = self.get_connection().await?;
+        conn.expire::<_, ()>(key, seconds as i64).await?;
+        Ok(())
+    }
+    
+    pub async fn xadd(
+        &self,
+        stream: &str,
+        fields: std::collections::HashMap<String, String>,
+    ) -> Result<()> {
+        let mut conn = self.get_connection().await?;
+        let fields_vec: Vec<(String, String)> = fields.into_iter().collect();
+        redis::cmd("XADD")
+            .arg(stream)
+            .arg("*")
+            .arg(&fields_vec)
+            .query_async(&mut conn)
+            .await?;
+        Ok(())
+    }
+    
+    pub async fn zadd(&self, key: &str, score: f64, member: String) -> Result<()> {
+        let mut conn = self.get_connection().await?;
+        conn.zadd::<_, _, _, ()>(key, member, score).await?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]

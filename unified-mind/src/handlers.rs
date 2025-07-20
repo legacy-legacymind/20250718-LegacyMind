@@ -69,8 +69,7 @@ impl RecallHandler {
         // Get API keys
         let openai_api_key = env::var("OPENAI_API_KEY")
             .map_err(|_| UnifiedMindError::EnvVar("OPENAI_API_KEY not found".to_string()))?;
-        let groq_api_key = env::var("GROQ_API_KEY")
-            .map_err(|_| UnifiedMindError::EnvVar("GROQ_API_KEY not found".to_string()))?;
+        let groq_api_key = env::var("GROQ_API_KEY").unwrap_or_default();
         
         info!("Connecting to Qdrant at {}:{}", qdrant_host, qdrant_port);
         let qdrant_client = Qdrant::from_url(&format!("http://{}:{}", qdrant_host, qdrant_port))
@@ -193,8 +192,23 @@ impl RecallHandler {
         
         // Synthesize answer with Groq if we have results
         let synthesis = if !thoughts.is_empty() && !self.groq_api_key.is_empty() {
-            self.synthesize_with_groq(&params.query, &thoughts).await.ok()
+            info!("Attempting Groq synthesis for {} thoughts", thoughts.len());
+            match self.synthesize_with_groq(&params.query, &thoughts).await {
+                Ok(result) => {
+                    info!("Groq synthesis successful - {} chars", result.len());
+                    Some(result)
+                },
+                Err(e) => {
+                    warn!("Groq synthesis failed: {}", e);
+                    None
+                }
+            }
         } else {
+            if thoughts.is_empty() {
+                info!("No synthesis: no thoughts found");
+            } else if self.groq_api_key.is_empty() {
+                warn!("No synthesis: Groq API key is empty - set GROQ_API_KEY environment variable to enable synthesis");
+            }
             None
         };
         
@@ -361,7 +375,7 @@ impl RecallHandler {
         );
         
         let groq_request = serde_json::json!({
-            "model": "mixtral-8x7b-32768",
+            "model": "llama-3.3-70b-versatile",
             "messages": [{
                 "role": "user",
                 "content": prompt
@@ -416,7 +430,7 @@ impl RecallHandler {
         );
         
         let groq_request = serde_json::json!({
-            "model": "mixtral-8x7b-32768",
+            "model": "llama-3.3-70b-versatile",
             "messages": [{
                 "role": "system",
                 "content": "You are a helpful assistant that synthesizes information from retrieved documents to answer queries accurately and comprehensively."
@@ -824,6 +838,90 @@ impl RecallHandler {
             usage_score * usage_weight;
         
         thought.combined_score = Some(combined_score);
+    }
+    
+    pub async fn submit_feedback(&self, params: FeedbackParams) -> Result<FeedbackResult> {
+        let start = Instant::now();
+        
+        // Store feedback record
+        let feedback_key = format!("um:feedback:{}:{}", params.search_id, params.thought_id);
+        let mut feedback_data: HashMap<String, String> = HashMap::new();
+        
+        feedback_data.insert("search_id".to_string(), params.search_id.clone());
+        feedback_data.insert("thought_id".to_string(), params.thought_id.to_string());
+        feedback_data.insert("instance_id".to_string(), self.instance_id.clone());
+        feedback_data.insert("timestamp".to_string(), Utc::now().to_rfc3339());
+        
+        if let Some(rating) = params.rating {
+            feedback_data.insert("user_rating".to_string(), rating.to_string());
+        }
+        
+        if let Some(relevance) = params.relevance {
+            feedback_data.insert("relevance_score".to_string(), relevance.to_string());
+        }
+        
+        if let Some(action) = &params.action {
+            feedback_data.insert("action".to_string(), format!("{:?}", action));
+            
+            if let Some(value) = &params.value {
+                feedback_data.insert("action_value".to_string(), value.to_string());
+            }
+        }
+        
+        // Store in Redis with 90-day TTL
+        self.redis_client
+            .hset_all(&feedback_key, feedback_data)
+            .await?;
+        self.redis_client
+            .expire(&feedback_key, 90 * 24 * 60 * 60)
+            .await?;
+        
+        // Add to feedback stream for real-time processing
+        let mut stream_data: HashMap<String, String> = HashMap::new();
+        stream_data.insert("event_type".to_string(), 
+            if params.rating.is_some() || params.relevance.is_some() { 
+                "explicit".to_string() 
+            } else { 
+                "implicit".to_string() 
+            }
+        );
+        stream_data.insert("search_id".to_string(), params.search_id.clone());
+        stream_data.insert("thought_id".to_string(), params.thought_id.to_string());
+        stream_data.insert("instance_id".to_string(), self.instance_id.clone());
+        
+        if let Some(rating) = params.rating {
+            stream_data.insert("rating".to_string(), rating.to_string());
+        }
+        
+        if let Some(action) = &params.action {
+            stream_data.insert("action".to_string(), format!("{:?}", action));
+        }
+        
+        self.redis_client
+            .xadd("um:feedback:stream", stream_data)
+            .await?;
+        
+        // Update aggregated feedback score
+        if let Some(rating) = params.rating {
+            let score = match rating {
+                1 => 1.0,
+                -1 => -1.0,
+                _ => 0.0,
+            };
+            
+            let member = format!("{}:{}", params.search_id, Utc::now().timestamp());
+            self.redis_client
+                .zadd(&format!("um:thought:feedback:{}", params.thought_id), score, member)
+                .await?;
+        }
+        
+        let elapsed = start.elapsed();
+        info!("Feedback submitted in {}ms", elapsed.as_millis());
+        
+        Ok(FeedbackResult {
+            success: true,
+            message: format!("Feedback recorded for thought {}", params.thought_id),
+        })
     }
 }
 

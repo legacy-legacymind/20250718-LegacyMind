@@ -20,9 +20,6 @@ pub struct UmRecallParams {
     #[serde(default)]
     pub search_all_instances: bool,
     
-    /// Use deep search with OpenAI embeddings (default: false uses Groq)
-    #[serde(default)]
-    pub deep_search: bool,
     
     /// Optional instance filter (e.g., ["CC", "DT"])
     #[serde(default)]
@@ -105,5 +102,45 @@ pub enum SearchType {
 pub struct CachedResult {
     pub result: UmRecallResult,
     pub cached_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct FeedbackParams {
+    /// Search session ID
+    pub search_id: String,
+    
+    /// Thought ID being rated
+    pub thought_id: String,
+    
+    /// User rating: -1 (thumbs down), 0 (neutral), 1 (thumbs up)
+    #[serde(default)]
+    pub rating: Option<i8>,
+    
+    /// Relevance score (1-10)
+    #[serde(default)]
+    pub relevance: Option<i32>,
+    
+    /// Feedback action type
+    #[serde(default)]
+    pub action: Option<FeedbackAction>,
+    
+    /// Action-specific value
+    #[serde(default)]
+    pub value: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FeedbackAction {
+    Click,
+    Copy,
+    Dwell,
+    Expand,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeedbackResult {
+    pub success: bool,
+    pub message: String,
 }
 

@@ -1,6 +1,6 @@
 use crate::error::UnifiedMindError;
 use crate::handlers::RecallHandler;
-use crate::models::UmRecallParams;
+use crate::models::{UmRecallParams, FeedbackParams};
 use crate::redis::RedisClient;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, tool::Parameters},
@@ -49,6 +49,26 @@ impl UnifiedMindService {
             },
             Err(e) => {
                 error!("Error in um_recall: {}", e);
+                Err(ErrorData::internal_error(e.to_string(), None))
+            }
+        }
+    }
+    
+    #[tool(
+        name = "um_feedback",
+        description = "Submit feedback on search results to improve future searches"
+    )]
+    async fn um_feedback(&self, params: Parameters<FeedbackParams>) -> std::result::Result<CallToolResult, ErrorData> {
+        info!("Processing um_feedback request");
+        
+        match self.recall_handler.submit_feedback(params.0).await {
+            Ok(result) => {
+                let content = Content::json(result)
+                    .map_err(|e| ErrorData::internal_error(format!("Failed to create JSON content: {}", e), None))?;
+                Ok(CallToolResult::success(vec![content]))
+            },
+            Err(e) => {
+                error!("Error in um_feedback: {}", e);
                 Err(ErrorData::internal_error(e.to_string(), None))
             }
         }

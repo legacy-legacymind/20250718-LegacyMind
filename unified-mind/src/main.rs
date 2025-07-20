@@ -6,7 +6,7 @@ mod service;
 
 use error::Result;
 use std::env;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -19,7 +19,11 @@ async fn main() -> Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| filter.into()),
         )
-        .with(tracing_subscriber::fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)  // Disable ANSI color codes for MCP compatibility
+                .with_writer(std::io::stderr)  // Output to stderr instead of stdout
+        )
         .init();
     
     info!("Starting UnifiedMind MCP server");
@@ -44,8 +48,9 @@ fn validate_environment() -> Result<()> {
         return Err(UnifiedMindError::EnvVar("OPENAI_API_KEY not found".to_string()));
     }
     
+    // Make GROQ_API_KEY optional - synthesis will be disabled if not provided
     if env::var("GROQ_API_KEY").is_err() {
-        return Err(UnifiedMindError::EnvVar("GROQ_API_KEY not found".to_string()));
+        warn!("GROQ_API_KEY not found - synthesis functionality will be disabled");
     }
     
     // Log configuration
