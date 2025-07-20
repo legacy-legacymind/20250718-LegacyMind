@@ -340,7 +340,7 @@ pub struct TrackedEntity {
 pub enum IdentityResponse {
     View {
         identity: Identity,
-        available_categories: Vec<&'static str>,
+        available_categories: Vec<String>,
     },
     Updated {
         operation: String,

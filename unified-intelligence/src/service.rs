@@ -167,8 +167,21 @@ impl UnifiedIntelligenceService {
         
         match self.handlers.ui_identity(params.0).await {
             Ok(response) => {
+                tracing::debug!("Handler returned response successfully");
+                
+                // Try to serialize the response manually first
+                match serde_json::to_value(&response) {
+                    Ok(value) => tracing::debug!("Manual serialization to Value succeeded"),
+                    Err(e) => tracing::error!("Manual serialization to Value failed: {}", e),
+                }
+                
                 let content = Content::json(response)
-                    .map_err(|e| ErrorData::internal_error(format!("Failed to create JSON content: {}", e), None))?;
+                    .map_err(|e| {
+                        tracing::error!("Content::json failed with error: {}", e);
+                        ErrorData::internal_error(format!("Serialization error: {}", e), None)
+                    })?;
+                    
+                tracing::debug!("Content::json succeeded");
                 Ok(CallToolResult::success(vec![content]))
             },
             Err(e) => {

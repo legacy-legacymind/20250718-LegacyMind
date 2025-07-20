@@ -9,6 +9,7 @@ mod repository;
 mod handlers;
 mod service;
 mod search_optimization;
+mod search_enhancements;
 mod validation;
 mod rate_limit;
 mod lua_scripts;

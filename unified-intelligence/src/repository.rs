@@ -5,6 +5,7 @@ use crate::error::Result;
 use crate::models::{ThoughtRecord, ChainMetadata, Identity, ThoughtMetadata};
 use crate::redis::RedisManager;
 use crate::search_optimization::SearchCache;
+use crate::search_enhancements::SearchEnhancer;
 // use crate::embeddings::EmbeddingGenerator;
 use crate::redisvl_service::RedisVLService;
 use crate::identity_documents::{IdentityDocument, IdentityIndex, IdentityMetadata};
@@ -195,6 +196,7 @@ pub struct RedisThoughtRepository {
     search_available: Arc<std::sync::atomic::AtomicBool>,
     search_cache: Arc<std::sync::Mutex<SearchCache>>,
     vector_service: Arc<RedisVLService>,
+    search_enhancer: SearchEnhancer,
 }
 
 impl RedisThoughtRepository {
@@ -209,6 +211,7 @@ impl RedisThoughtRepository {
             search_available,
             search_cache,
             vector_service: Arc::new(RedisVLService::new(instance_id, redis)),
+            search_enhancer: SearchEnhancer::new(),
         }
     }
     
@@ -230,7 +233,7 @@ impl RedisThoughtRepository {
         let pattern = format!("{}:Thoughts:*", instance);
         let keys = self.redis.scan_match(&pattern, 100).await?;
         
-        let mut thoughts = Vec::new();
+        let mut all_thoughts = Vec::new();
         for key in keys {
             // Try to get as JSON first, fallback to string
             let json_str = match self.redis.json_get::<serde_json::Value>(&key, ".").await {
@@ -248,16 +251,14 @@ impl RedisThoughtRepository {
             };
             
             if let Ok(thought) = serde_json::from_str::<ThoughtRecord>(&json_str) {
-                if thought.thought.to_lowercase().contains(&query.to_lowercase()) {
-                    thoughts.push(thought);
-                    if thoughts.len() >= limit {
-                        break;
-                    }
-                }
+                all_thoughts.push(thought);
             }
         }
         
-        Ok(thoughts)
+        // Use enhanced search to find and rank relevant thoughts
+        let enhanced_results = self.search_enhancer.search_enhanced(&all_thoughts, query, limit);
+        
+        Ok(enhanced_results)
     }
     
     async fn fallback_search_global(
@@ -269,7 +270,7 @@ impl RedisThoughtRepository {
         let pattern = "*:Thoughts:*";
         let keys = self.redis.scan_match(&pattern, 200).await?; // Get more keys since we're searching globally
         
-        let mut thoughts = Vec::new();
+        let mut all_thoughts = Vec::new();
         for key in keys {
             // Try to get as JSON first, fallback to string
             let json_str = match self.redis.json_get::<serde_json::Value>(&key, ".").await {
@@ -284,19 +285,14 @@ impl RedisThoughtRepository {
             };
             
             if let Ok(thought) = serde_json::from_str::<ThoughtRecord>(&json_str) {
-                if thought.thought.to_lowercase().contains(&query.to_lowercase()) {
-                    thoughts.push(thought);
-                    if thoughts.len() >= limit {
-                        break;
-                    }
-                }
+                all_thoughts.push(thought);
             }
         }
         
-        // Sort by timestamp (most recent first)
-        thoughts.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        // Use enhanced search to find and rank relevant thoughts globally
+        let enhanced_results = self.search_enhancer.search_enhanced(&all_thoughts, query, limit);
         
-        Ok(thoughts)
+        Ok(enhanced_results)
     }
 }
 
