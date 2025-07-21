@@ -1,0 +1,22 @@
+# ObsidianMCP Configuration
+# This is a sample configuration file for the ObsidianMCP server
+
+[vault]
+# Path to your Obsidian vault (modify this to point to your actual vault)
+root_path = "./test_vault"
+# Allowed file extensions for operations
+allowed_extensions = ["md", "txt", "json", "yaml", "yml"]
+# Maximum file size in bytes (10MB)
+max_file_size = 10485760
+# Enable file watching for real-time updates (future feature)
+enable_watching = false
+
+[server]
+name = "ObsidianMCP"
+version = "0.1.0"
+
+# Optional Redis configuration for Federation integration
+# [redis]
+# url = "redis://localhost:6379"
+# pool_size = 10
+# key_prefix = "obsidian_mcp"

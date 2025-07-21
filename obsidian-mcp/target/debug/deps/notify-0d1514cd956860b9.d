@@ -1,0 +1,11 @@
+/Users/samuelatagana/Projects/LegacyMind/obsidian-mcp/target/debug/deps/notify-0d1514cd956860b9.d: /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/lib.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/fsevent.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/event.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/null.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/poll.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/config.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/error.rs
+
+/Users/samuelatagana/Projects/LegacyMind/obsidian-mcp/target/debug/deps/libnotify-0d1514cd956860b9.rmeta: /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/lib.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/fsevent.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/event.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/null.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/poll.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/config.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/error.rs
+
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/lib.rs:
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/fsevent.rs:
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/event.rs:
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/null.rs:
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/poll.rs:
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/config.rs:
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/notify-6.1.1/src/error.rs:

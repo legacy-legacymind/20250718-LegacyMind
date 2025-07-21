@@ -1,0 +1,11 @@
+/Users/samuelatagana/Projects/LegacyMind/obsidian-mcp/target/release/deps/json5-bc34da3872b52319.d: /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/lib.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/de.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/error.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/ser.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/json5.pest
+
+/Users/samuelatagana/Projects/LegacyMind/obsidian-mcp/target/release/deps/libjson5-bc34da3872b52319.rlib: /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/lib.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/de.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/error.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/ser.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/json5.pest
+
+/Users/samuelatagana/Projects/LegacyMind/obsidian-mcp/target/release/deps/libjson5-bc34da3872b52319.rmeta: /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/lib.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/de.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/error.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/ser.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/json5.pest
+
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/lib.rs:
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/de.rs:
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/error.rs:
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/ser.rs:
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/json5-0.4.1/src/json5.pest:

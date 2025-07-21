@@ -1,0 +1,41 @@
+use crate::models::*;
+use crate::service::ObsidianMcpService;
+use rmcp::handler::server::tool::Parameters;
+use rmcp_macros::tool;
+
+/// Implementation of the core MCP tools for Obsidian vault operations
+impl ObsidianMcpService {
+    /// Search for files and content within the vault
+    #[tool(
+        description = "Search for files and content within the Obsidian vault"
+    )]
+    pub async fn search(
+        &self,
+        Parameters(params): Parameters<SearchParams>,
+    ) -> Result<SearchResults, rmcp::Error> {
+        tracing::info!("Searching vault: query='{}', prefix={:?}", params.query, params.path_prefix);
+        
+        // TODO: Implement search functionality
+        Ok(SearchResults {
+            files: vec![],
+            total_matches: 0,
+            query: params.query,
+        })
+    }
+
+    /// Browse and read files from the vault
+    #[tool(
+        description = "Browse and read files from the Obsidian vault"
+    )]
+    pub async fn browse(
+        &self,
+        Parameters(path): Parameters<String>,
+    ) -> Result<VaultFile, rmcp::Error> {
+        tracing::info!("Browsing vault file: {}", path);
+        
+        let vault_file = self.vault_manager().read_file(&path, true)
+            .map_err(|e| rmcp::Error::from(e))?;
+            
+        Ok(vault_file)
+    }
+}

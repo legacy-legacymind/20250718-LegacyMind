@@ -1,0 +1,10 @@
+/Users/samuelatagana/Projects/LegacyMind/obsidian-mcp/target/release/deps/ref_cast-cad4b4884712fd7d.d: /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/lib.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/custom.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/layout.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/trivial.rs
+
+/Users/samuelatagana/Projects/LegacyMind/obsidian-mcp/target/release/deps/libref_cast-cad4b4884712fd7d.rlib: /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/lib.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/custom.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/layout.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/trivial.rs
+
+/Users/samuelatagana/Projects/LegacyMind/obsidian-mcp/target/release/deps/libref_cast-cad4b4884712fd7d.rmeta: /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/lib.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/custom.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/layout.rs /Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/trivial.rs
+
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/lib.rs:
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/custom.rs:
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/layout.rs:
+/Users/samuelatagana/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-1.0.24/src/trivial.rs:
