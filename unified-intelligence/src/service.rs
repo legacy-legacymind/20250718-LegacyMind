@@ -11,7 +11,7 @@ use tracing;
 use crate::error::UnifiedIntelligenceError;
 use crate::models::{UiThinkParams, UiRecallParams, UiRecallFeedbackParams, UiIdentityParams, UiDebugEnvParams};
 use crate::redis::RedisManager;
-use crate::repository::RedisThoughtRepository;
+use crate::repository::RedisRepository;
 use crate::handlers::ToolHandlers;
 use crate::search_optimization::SearchCache;
 use crate::validation::InputValidator;
@@ -21,7 +21,7 @@ use crate::rate_limit::RateLimiter;
 #[derive(Clone)]
 pub struct UnifiedIntelligenceService {
     tool_router: ToolRouter<Self>,
-    handlers: Arc<ToolHandlers<RedisThoughtRepository>>,
+    handlers: Arc<ToolHandlers<RedisRepository>>,
     rate_limiter: Arc<RateLimiter>,
     instance_id: String,
 }
@@ -64,7 +64,7 @@ impl UnifiedIntelligenceService {
         let search_cache = Arc::new(std::sync::Mutex::new(SearchCache::new(300)));
         
         // Create repository with cache
-        let repository = Arc::new(RedisThoughtRepository::new(
+        let repository = Arc::new(RedisRepository::new(
             redis_manager.clone(),
             search_available.clone(),
             search_cache.clone(),

@@ -9,9 +9,6 @@ pub enum UnifiedIntelligenceError {
     #[error("Connection pool error: {0}")]
     Pool(#[from] deadpool_redis::PoolError),
     
-    #[error("Connection pool creation error: {0}")]
-    PoolCreation(String),
-    
     #[error("Failed to get connection from pool: {0}")]
     #[allow(dead_code)]
     PoolGet(String),

@@ -8,28 +8,26 @@ use crate::models::{
     RecallResponse, ChainMetadata, IdentityResponse, IdentityOperation, Identity, DebugEnvResponse,
     OperationHelp, CategoryHelp, FieldTypeHelp, ExampleUsage, ThoughtMetadata, UiRecallFeedbackParams,
     FeedbackResponse, MindMonitorStatusParams, MindMonitorStatusResponse, MindCognitiveMetricsParams,
-    MindCognitiveMetricsResponse, MindInterventionQueueParams, MindInterventionQueueResponse,
-    InterventionDetail, MindConversationInsightsParams, MindConversationInsightsResponse,
+    MindCognitiveMetricsResponse, MindInterventionQueueParams, MindInterventionQueueResponse, MindConversationInsightsParams, MindConversationInsightsResponse,
     MindEntityTrackingParams, MindEntityTrackingResponse, TrackedEntity, RelationshipDynamics
 };
-use crate::repository::ThoughtRepository;
-#[cfg(not(test))]
+use crate::repository::Repository;
 use crate::search_optimization::SearchCache;
 use crate::validation::InputValidator;
 use crate::visual::VisualOutput;
 use crate::frameworks::{ThinkingFramework, FrameworkProcessor, FrameworkVisual};
 
 /// Handler for MCP tool operations
-pub struct ToolHandlers<R: ThoughtRepository> {
+pub struct ToolHandlers<R: Repository> {
     repository: Arc<R>,
-    instance_id: String,
+    instance_id: Arc<String>,
     validator: Arc<InputValidator>,
     _search_cache: Arc<std::sync::Mutex<SearchCache>>,
     search_available: Arc<std::sync::atomic::AtomicBool>,
     visual: VisualOutput,
 }
 
-impl<R: ThoughtRepository> ToolHandlers<R> {
+impl<R: Repository> ToolHandlers<R> {
     pub fn new(
         repository: Arc<R>,
         instance_id: String,
@@ -39,7 +37,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
     ) -> Self {
         Self {
             repository,
-            instance_id,
+            instance_id: Arc::new(instance_id),
             validator,
             _search_cache: search_cache,
             search_available,
@@ -72,7 +70,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         
         // Process through framework
         if framework != ThinkingFramework::Sequential {
-            let processor = FrameworkProcessor::new(framework.clone());
+            let processor = FrameworkProcessor::new(framework);
             let result = processor.process_thought(&params.thought, params.thought_number);
             
             FrameworkVisual::display_insights(&result.insights);
@@ -95,7 +93,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         
         // Create thought record
         let thought = ThoughtRecord::new(
-            self.instance_id.clone(),
+            self.instance_id.as_ref().clone(),
             params.thought,
             params.thought_number,
             params.total_thoughts,
@@ -110,10 +108,10 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             let chain_exists = self.repository.chain_exists(chain_id).await?;
             if !chain_exists {
                 let metadata = ChainMetadata {
-                    chain_id: chain_id.clone(),
+                    chain_id: chain_id.to_string(),
                     created_at: chrono::Utc::now().to_rfc3339(),
                     thought_count: params.total_thoughts,
-                    instance: self.instance_id.clone(),
+                    instance: self.instance_id.as_ref().clone(),
                 };
                 self.repository.save_chain_metadata(&metadata).await?;
             }
@@ -131,7 +129,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
            params.tags.is_some() || params.category.is_some() {
             let metadata = ThoughtMetadata::new(
                 thought_id.clone(),
-                self.instance_id.clone(),
+                self.instance_id.as_ref().clone(),
                 params.importance,
                 params.relevance,
                 params.tags.clone(),
@@ -206,48 +204,16 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             if params.semantic_search.unwrap_or(false) {
                 // Use semantic search via repository with configurable threshold
                 let threshold = params.threshold.unwrap_or(0.5); // Standardized threshold for improved embedding quality
-                tracing::info!("Handler semantic search - threshold: {}, global: {}, enhanced: {}", 
-                    threshold, search_all_instances, has_metadata_filters);
                 
-                // Use enhanced search methods if metadata filters are provided (Phase 2)
-                if has_metadata_filters {
-                    if search_all_instances {
-                        self.repository.search_thoughts_semantic_global_enhanced(
-                            query, 
-                            limit, 
-                            threshold,
-                            params.tags_filter.clone(),
-                            params.min_importance,
-                            params.min_relevance,
-                            params.category_filter.clone(),
-                        ).await?
-                    } else {
-                        self.repository.search_thoughts_semantic_enhanced(
-                            &self.instance_id,
-                            query, 
-                            limit, 
-                            threshold,
-                            params.tags_filter.clone(),
-                            params.min_importance,
-                            params.min_relevance,
-                            params.category_filter.clone(),
-                        ).await?
-                    }
-                } else {
-                    // Use standard semantic search
-                    let mut thoughts = if search_all_instances {
-                        self.repository.search_thoughts_semantic_global(query, limit, threshold).await?
-                    } else {
-                        self.repository.search_thoughts_semantic(&self.instance_id, query, limit, threshold).await?
-                    };
-                    
-                    // Apply boost scores to improve ranking (Phase 3)
-                    if !search_all_instances {
-                        self.repository.apply_boost_scores(&self.instance_id, &mut thoughts).await?;
-                    }
-                    
-                    thoughts
-                }
+                // Call the extracted semantic search function
+                self.perform_semantic_search(
+                    query,
+                    limit,
+                    threshold,
+                    search_all_instances,
+                    has_metadata_filters,
+                    &params,
+                ).await?
             } else {
                 // Use regular text search (Phase 2 filters not supported for text search yet)
                 tracing::info!("Handler text search - global: {}", search_all_instances);
@@ -367,6 +333,62 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         })
     }
     
+    /// Perform semantic search with optional metadata filters
+    async fn perform_semantic_search(
+        &self,
+        query: &str,
+        limit: usize,
+        threshold: f32,
+        search_all_instances: bool,
+        has_metadata_filters: bool,
+        params: &UiRecallParams,
+    ) -> Result<Vec<ThoughtRecord>> {
+        tracing::info!(
+            "Handler semantic search - threshold: {}, global: {}, enhanced: {}", 
+            threshold, search_all_instances, has_metadata_filters
+        );
+        
+        // Use enhanced search methods if metadata filters are provided (Phase 2)
+        if has_metadata_filters {
+            if search_all_instances {
+                self.repository.search_thoughts_semantic_global_enhanced(
+                    query, 
+                    limit, 
+                    threshold,
+                    params.tags_filter.as_ref().cloned(),
+                    params.min_importance,
+                    params.min_relevance,
+                    params.category_filter.as_ref().cloned(),
+                ).await
+            } else {
+                self.repository.search_thoughts_semantic_enhanced(
+                    &self.instance_id,
+                    query, 
+                    limit, 
+                    threshold,
+                    params.tags_filter.as_ref().cloned(),
+                    params.min_importance,
+                    params.min_relevance,
+                    params.category_filter.as_ref().cloned(),
+                ).await
+            }
+        } else {
+            // Use standard semantic search
+            let mut thoughts = if search_all_instances {
+                self.repository.search_thoughts_semantic_global(query, limit, threshold).await?
+            } else {
+                self.repository.search_thoughts_semantic(&self.instance_id, query, limit, threshold).await?
+            };
+            
+            // Apply boost scores to improve ranking (Phase 3)
+            if !search_all_instances {
+                self.repository.apply_boost_scores(&self.instance_id, &mut thoughts).await?;
+            }
+            
+            Ok(thoughts)
+        }
+    }
+    
     // Action implementations
     
     async fn analyze_thoughts(&self, thoughts: &[ThoughtRecord]) -> Result<serde_json::Value> {
@@ -442,11 +464,17 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         // Create new chain with merged thoughts
         let mut thought_number = 1;
         for thought in source_thoughts.iter().chain(target_thoughts.iter()) {
-            let mut merged_thought = thought.clone();
-            merged_thought.id = uuid::Uuid::new_v4().to_string();
-            merged_thought.chain_id = Some(new_chain_id.clone());
-            merged_thought.thought_number = thought_number;
-            merged_thought.total_thoughts = total_thoughts as i32;
+            let merged_thought = ThoughtRecord {
+                id: uuid::Uuid::new_v4().to_string(),
+                instance: thought.instance.clone(),
+                thought: thought.thought.clone(),
+                thought_number,
+                total_thoughts: total_thoughts as i32,
+                chain_id: Some(new_chain_id.clone()),
+                next_thought_needed: thought.next_thought_needed,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                similarity: None,
+            };
             
             self.repository.save_thought(&merged_thought).await?;
             thought_number += 1;
@@ -457,7 +485,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             chain_id: new_chain_id.clone(),
             created_at: chrono::Utc::now().to_rfc3339(),
             thought_count: total_thoughts as i32,
-            instance: self.instance_id.clone(),
+            instance: self.instance_id.as_ref().clone(),
         };
         self.repository.save_chain_metadata(&metadata).await?;
         
@@ -477,7 +505,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         
         // Create new thought as first in new chain
         let branch_thought = ThoughtRecord::new(
-            self.instance_id.clone(),
+            self.instance_id.as_ref().clone(),
             format!("Branching from: {}", thought.thought),
             1,
             1,
@@ -492,7 +520,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             chain_id: new_chain_id.clone(),
             created_at: chrono::Utc::now().to_rfc3339(),
             thought_count: 1,
-            instance: self.instance_id.clone(),
+            instance: self.instance_id.as_ref().clone(),
         };
         self.repository.save_chain_metadata(&metadata).await?;
         
@@ -562,7 +590,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
                 })?;
                 
                 #[cfg(not(test))]
-                self.add_to_identity_document(&category, &field, value).await?;
+                self.add_to_identity_field(&category, &field, value).await?;
                 #[cfg(test)]
                 self.add_to_identity_field(&category, &field, value).await?;
                 Ok(IdentityResponse::Updated { 
@@ -589,7 +617,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
                 
                 
                 #[cfg(not(test))]
-                self.modify_identity_document(&category, &field, value).await?;
+                self.modify_identity_field(&category, &field, value).await?;
                 #[cfg(test)]
                 self.modify_identity_field(&category, &field, value).await?;
                 Ok(IdentityResponse::Updated { 
@@ -611,7 +639,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
                 })?;
                 
                 #[cfg(not(test))]
-                self.delete_from_identity_document(&category, &field, params.value).await?;
+                self.delete_from_identity_field(&category, &field, params.value).await?;
                 #[cfg(test)]
                 self.delete_from_identity_field(&category, &field, params.value).await?;
                 Ok(IdentityResponse::Updated { 
@@ -632,16 +660,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
     
     #[cfg(not(test))]
     async fn get_or_create_identity_documents(&self) -> Result<Identity> {
-        // First, check if we need to migrate from monolithic format
-        let identity_key = format!("{}:identity", self.instance_id);
-        if self.repository.get_identity(&identity_key).await?.is_some() {
-            // Migrate existing monolithic identity to documents
-            tracing::info!("Migrating monolithic identity to document format for {}", self.instance_id);
-            self.repository.migrate_identity_to_documents(&self.instance_id).await?;
-            
-            // Optional: Delete the old monolithic identity after successful migration
-            // self.repository.json_delete(&identity_key, ".").await?;
-        }
+        // Check if we have any existing identity documents (migration is handled elsewhere if needed)
         
         // Get all identity documents
         let documents = self.repository.get_all_identity_documents(&self.instance_id).await?;
@@ -654,7 +673,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             // Convert to documents and save
             let new_documents = crate::identity_documents::conversion::monolithic_to_documents(
                 identity_json,
-                self.instance_id.clone(),
+                self.instance_id.as_ref().clone(),
             )?;
             
             for doc in &new_documents {
@@ -716,13 +735,21 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         } else {
             // Create default identity for this instance
             let identity = Identity::default_for_instance(&self.instance_id);
-            self.repository.save_identity(&identity_key, &identity).await?;
+            // Convert to documents and save
+            let identity_json = serde_json::to_value(&identity)?;
+            let new_documents = crate::identity_documents::conversion::monolithic_to_documents(
+                identity_json,
+                self.instance_id.as_ref().clone(),
+            )?;
+            
+            for doc in &new_documents {
+                self.repository.save_identity_document(doc).await?;
+            }
             Ok(identity)
         }
     }
     
-    #[cfg(not(test))]
-    async fn add_to_identity_document(&self, category: &str, field: &str, value: serde_json::Value) -> Result<()> {
+    async fn add_to_identity_field(&self, category: &str, field: &str, value: serde_json::Value) -> Result<()> {
         // Validate category
         self.validate_category(category)?;
         
@@ -746,7 +773,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             crate::identity_documents::IdentityDocument::new(
                 field_type.clone(),
                 serde_json::json!({}),
-                self.instance_id.clone(),
+                self.instance_id.as_ref().clone(),
             )
         };
         
@@ -799,13 +826,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         Ok(())
     }
     
-    // Backward compatibility wrapper
-    async fn add_to_identity_field(&self, category: &str, field: &str, value: serde_json::Value) -> Result<()> {
-        self.add_to_identity_document(category, field, value).await
-    }
-    
-    #[cfg(not(test))]
-    async fn modify_identity_document(&self, category: &str, field: &str, value: serde_json::Value) -> Result<()> {
+    async fn modify_identity_field(&self, category: &str, field: &str, value: serde_json::Value) -> Result<()> {
         // Validate category
         self.validate_category(category)?;
         
@@ -829,7 +850,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             crate::identity_documents::IdentityDocument::new(
                 field_type.clone(),
                 serde_json::json!({}),
-                self.instance_id.clone(),
+                self.instance_id.as_ref().clone(),
             )
         };
         
@@ -864,13 +885,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         Ok(())
     }
     
-    // Backward compatibility wrapper
-    async fn modify_identity_field(&self, category: &str, field: &str, value: serde_json::Value) -> Result<()> {
-        self.modify_identity_document(category, field, value).await
-    }
-    
-    #[cfg(not(test))]
-    async fn delete_from_identity_document(&self, category: &str, field: &str, value: Option<serde_json::Value>) -> Result<()> {
+    async fn delete_from_identity_field(&self, category: &str, field: &str, value: Option<serde_json::Value>) -> Result<()> {
         // Validate category
         self.validate_category(category)?;
         
@@ -929,11 +944,6 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         ).await?;
         
         Ok(())
-    }
-    
-    // Backward compatibility wrapper
-    async fn delete_from_identity_field(&self, category: &str, field: &str, value: Option<serde_json::Value>) -> Result<()> {
-        self.delete_from_identity_document(category, field, value).await
     }
     
     // Metadata is now handled per-document automatically
@@ -1299,8 +1309,8 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
     
     /// Handle mind_monitor_status tool - Get current monitoring status and metrics
     pub async fn mind_monitor_status(&self, params: MindMonitorStatusParams) -> Result<MindMonitorStatusResponse> {
-        tracing::info!("Monitoring status request for instance '{}', detailed: {:?}", 
-            self.instance_id, params.detailed);
+        tracing::info!("Monitoring status request for instance '{}'", 
+            self.instance_id);
         
         // TODO: This would integrate with UnifiedMind service
         // For now, return mock monitoring data based on repository state
@@ -1308,7 +1318,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         // Get some basic metrics from repository
         let thoughts_count = self.repository.get_instance_thoughts(&self.instance_id, 1000).await?.len();
         
-        let detailed_metrics = if params.detailed.unwrap_or(false) {
+        let detailed_metrics = if false { // Default value since field was removed
             Some(json!({
                 "thought_processing": {
                     "total_thoughts": thoughts_count,
@@ -1343,7 +1353,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
     
     /// Handle mind_cognitive_metrics tool - Get cognitive pattern metrics and insights
     pub async fn mind_cognitive_metrics(&self, params: MindCognitiveMetricsParams) -> Result<MindCognitiveMetricsResponse> {
-        let window = params.window.as_deref().unwrap_or("recent");
+        let window = "recent"; // Default value since field was removed
         
         tracing::info!("Cognitive metrics request for instance '{}', window: {}", 
             self.instance_id, window);
@@ -1351,7 +1361,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         // TODO: Integrate with UnifiedMind service for real cognitive metrics
         // For now, return mock metrics based on thought patterns
         
-        let trends = if params.include_trends.unwrap_or(false) {
+        let trends = if false { // Default value since field was removed
             Some(json!({
                 "cognitive_load_trend": "decreasing",
                 "pattern_recognition_improvement": 0.12,
@@ -1379,10 +1389,10 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
     
     /// Handle mind_intervention_queue tool - Get pending interventions and queue status
     pub async fn mind_intervention_queue(&self, params: MindInterventionQueueParams) -> Result<MindInterventionQueueResponse> {
-        let limit = params.limit.unwrap_or(10);
+        let limit = 10; // Default value since field was removed
         
         tracing::info!("Intervention queue request for instance '{}', priority: {:?}, limit: {}", 
-            self.instance_id, params.priority, limit);
+            self.instance_id, "all", limit); // Default priority since field was removed
         
         // TODO: Integrate with UnifiedMind service for real intervention queue
         // For now, return empty queue or mock interventions
@@ -1405,7 +1415,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
     
     /// Handle mind_conversation_insights tool - Get insights about conversation patterns
     pub async fn mind_conversation_insights(&self, params: MindConversationInsightsParams) -> Result<MindConversationInsightsResponse> {
-        let session_id = params.session_id.unwrap_or_else(|| format!("session-{}", uuid::Uuid::new_v4()));
+        let session_id = format!("session-{}", uuid::Uuid::new_v4()); // Generate new since field was removed
         
         tracing::info!("Conversation insights request for instance '{}', session: {}", 
             self.instance_id, session_id);
@@ -1432,10 +1442,10 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             .collect();
         topics.truncate(5);
         
-        let key_entities = if params.include_entities.unwrap_or(true) {
+        let key_entities = if true { // Default value since field was removed
             vec![
                 json!({
-                    "text": self.instance_id.clone(),
+                    "text": self.instance_id.as_ref().clone(),
                     "type": "instance",
                     "confidence": 1.0,
                     "importance": 0.9,
@@ -1461,10 +1471,10 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
     
     /// Handle mind_entity_tracking tool - Get detected entities and their importance
     pub async fn mind_entity_tracking(&self, params: MindEntityTrackingParams) -> Result<MindEntityTrackingResponse> {
-        let min_confidence = params.min_confidence.unwrap_or(0.5);
+        let min_confidence = 0.5; // Default value since field was removed
         
         tracing::info!("Entity tracking request for instance '{}', type: {:?}, min_confidence: {}", 
-            self.instance_id, params.entity_type, min_confidence);
+            self.instance_id, "all", min_confidence); // Default entity_type since field was removed
         
         // TODO: Integrate with UnifiedMind service for real entity detection
         // For now, extract basic entities from recent thoughts
@@ -1476,7 +1486,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         
         // Always include instance as an entity
         entities.push(TrackedEntity {
-            text: self.instance_id.clone(),
+            text: self.instance_id.as_ref().clone(),
             entity_type: "instance".to_string(),
             confidence: 1.0,
             context: "Current active instance".to_string(),
@@ -1506,7 +1516,7 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
         }
         
         // Filter by entity type if specified
-        if let Some(entity_type) = &params.entity_type {
+        if let Some(entity_type) = &None::<String> { // Field was removed
             entities.retain(|e| e.entity_type == *entity_type);
         }
         
@@ -1527,10 +1537,10 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
             }))
             .collect();
         
-        let enrichment_suggestions = if params.include_enrichment.unwrap_or(false) {
+        let enrichment_suggestions = if false { // Default value since field was removed
             Some(vec![
                 json!({
-                    "entity": self.instance_id.clone(),
+                    "entity": self.instance_id.as_ref().clone(),
                     "suggestion": "Add role description to identity",
                     "confidence": 0.9,
                 }),
@@ -1551,10 +1561,10 @@ impl<R: ThoughtRepository> ToolHandlers<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repository::MockThoughtRepository;
+    use crate::repository::MockRepository;
     
-    fn create_test_handler() -> ToolHandlers<MockThoughtRepository> {
-        let repository = Arc::new(MockThoughtRepository::new());
+    fn create_test_handler() -> ToolHandlers<MockRepository> {
+        let repository = Arc::new(MockRepository::new());
         let validator = Arc::new(InputValidator::new());
         let search_cache = Arc::new(std::sync::Mutex::new(SearchCache::new(300))); // 5 minute TTL
         let search_available = Arc::new(std::sync::atomic::AtomicBool::new(true));

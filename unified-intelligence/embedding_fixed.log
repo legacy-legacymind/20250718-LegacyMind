@@ -1,9 +1,0 @@
-2025-07-17 08:25:16,248 - __main__ - INFO - Retrieved OPENAI_API_KEY from Redis (164 chars)
-2025-07-17 08:25:16,274 - __main__ - INFO - Starting Background Embedding Service for instance: Claude
-2025-07-17 08:25:16,274 - __main__ - INFO - Consumer: embedder_57106
-2025-07-17 08:25:16,274 - __main__ - INFO - Stream: Claude:events
-2025-07-17 08:25:16,278 - __main__ - INFO - Consumer group already exists: embedding_processors
-2025-07-17 08:25:16,278 - __main__ - INFO - Starting stream consumer...
-2025-07-17 08:25:16,278 - __main__ - INFO - Starting retry processor...
-2025-07-17 08:25:16,278 - __main__ - INFO - Starting metrics reporter...
-2025-07-17 08:25:16,283 - __main__ - INFO - Metrics: processed=0, failed=0, pending=0, retry=0, dlq=0

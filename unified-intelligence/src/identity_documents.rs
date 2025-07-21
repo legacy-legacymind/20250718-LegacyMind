@@ -69,35 +69,6 @@ pub enum IdentityFieldType {
     Custom(String),
 }
 
-impl IdentityFieldType {
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Basics => "basics",
-            Self::WorkStyle => "work_style",
-            Self::Communication => "communication",
-            Self::KnowledgeDomains => "knowledge_domains",
-            Self::Preferences => "preferences",
-            Self::Relationships => "relationships",
-            Self::Context => "context",
-            Self::Metadata => "metadata",
-            Self::Custom(s) => s,
-        }
-    }
-    
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "basics" => Self::Basics,
-            "work_style" => Self::WorkStyle,
-            "communication" => Self::Communication,
-            "knowledge_domains" => Self::KnowledgeDomains,
-            "preferences" => Self::Preferences,
-            "relationships" => Self::Relationships,
-            "context" => Self::Context,
-            "metadata" => Self::Metadata,
-            other => Self::Custom(other.to_string()),
-        }
-    }
-}
 
 /// Index structure for tracking all identity documents
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -115,43 +86,6 @@ pub struct IdentityIndex {
     pub instance: String,
 }
 
-impl IdentityIndex {
-    pub fn new(instance: String) -> Self {
-        Self {
-            fields: HashMap::new(),
-            document_count: 0,
-            last_updated: Utc::now(),
-            instance,
-        }
-    }
-    
-    /// Add a document ID to the index
-    pub fn add_document(&mut self, field_type: &str, doc_id: String) {
-        self.fields
-            .entry(field_type.to_string())
-            .or_insert_with(Vec::new)
-            .push(doc_id);
-        self.document_count += 1;
-        self.last_updated = Utc::now();
-    }
-    
-    /// Remove a document ID from the index
-    pub fn remove_document(&mut self, field_type: &str, doc_id: &str) {
-        if let Some(docs) = self.fields.get_mut(field_type) {
-            docs.retain(|id| id != doc_id);
-            if docs.is_empty() {
-                self.fields.remove(field_type);
-            }
-            self.document_count = self.document_count.saturating_sub(1);
-            self.last_updated = Utc::now();
-        }
-    }
-    
-    /// Get all document IDs for a field type
-    pub fn get_field_documents(&self, field_type: &str) -> Option<&Vec<String>> {
-        self.fields.get(field_type)
-    }
-}
 
 impl IdentityDocument {
     /// Create a new identity document
@@ -180,12 +114,6 @@ impl IdentityDocument {
         }
     }
     
-    /// Update the content and increment version
-    pub fn update_content(&mut self, new_content: Value) {
-        self.content = new_content;
-        self.updated_at = Utc::now();
-        self.version += 1;
-    }
     
     /// Mark as accessed
     pub fn mark_accessed(&mut self) {
@@ -202,7 +130,7 @@ impl IdentityDocument {
 /// Conversion utilities for migrating between formats
 pub mod conversion {
     use super::*;
-    use std::collections::HashMap;
+    
     
     /// Convert monolithic identity JSON to document-based format
     pub fn monolithic_to_documents(
@@ -227,7 +155,7 @@ pub mod conversion {
                         let mut doc = IdentityDocument::new(
                             format!("relationships:{}", person),
                             relationship_data.clone(),
-                            instance.clone(),
+                            instance.to_string(),
                         );
                         doc.metadata.tags.push("relationship".to_string());
                         doc.metadata.tags.push(person.to_string());
@@ -236,9 +164,9 @@ pub mod conversion {
                 }
             } else {
                 let mut doc = IdentityDocument::new(
-                    field_name.clone(),
+                    field_name.to_string(),
                     field_value.clone(),
-                    instance.clone(),
+                    instance.to_string(),
                 );
                 
                 // Add default tags based on field type
@@ -311,20 +239,4 @@ mod tests {
         assert_eq!(relationship_doc.content["type"], "user");
     }
     
-    
-    #[test]
-    fn test_identity_index_operations() {
-        let mut index = IdentityIndex::new("CCI".to_string());
-        
-        index.add_document("basics", "doc1".to_string());
-        index.add_document("basics", "doc2".to_string());
-        index.add_document("preferences", "doc3".to_string());
-        
-        assert_eq!(index.document_count, 3);
-        assert_eq!(index.get_field_documents("basics").unwrap().len(), 2);
-        
-        index.remove_document("basics", "doc1");
-        assert_eq!(index.document_count, 2);
-        assert_eq!(index.get_field_documents("basics").unwrap().len(), 1);
-    }
 }

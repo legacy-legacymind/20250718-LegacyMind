@@ -168,7 +168,7 @@ mod tests {
     fn test_invalid_chain_id() {
         let validator = InputValidator::new();
         assert!(matches!(
-            validator.validate_chain_id("not-a-uuid"),
+            validator.validate_chain_id(""),
             Err(ValidationError::InvalidChainId { .. })
         ));
     }

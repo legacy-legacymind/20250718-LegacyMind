@@ -103,7 +103,6 @@ pub struct ThoughtRecord {
     pub id: String,
     pub instance: String,
     pub thought: String,
-    pub content: String, // Alias for thought for compatibility
     pub thought_number: i32,
     pub total_thoughts: i32,
     pub timestamp: String,
@@ -125,8 +124,7 @@ impl ThoughtRecord {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             instance,
-            thought: thought.clone(),
-            content: thought, // Duplicate for compatibility
+            thought,
             thought_number,
             total_thoughts,
             timestamp: Utc::now().to_rfc3339(),
@@ -201,7 +199,7 @@ pub struct FeedbackResponse {
 }
 
 /// Chain metadata stored in Redis
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChainMetadata {
     pub chain_id: String,
     pub created_at: String,
@@ -247,51 +245,31 @@ pub struct UiDebugEnvParams {
 /// Parameters for the mind_monitor_status tool
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MindMonitorStatusParams {
-    #[schemars(description = "Include detailed metrics breakdown (default: false)")]
-    pub detailed: Option<bool>,
+    // No fields currently used
 }
 
 /// Parameters for the mind_cognitive_metrics tool
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MindCognitiveMetricsParams {
-    #[schemars(description = "Time window to aggregate metrics: 'recent', 'session', 'all' (default: 'recent')")]
-    pub window: Option<String>,
-    
-    #[schemars(description = "Include historical trends (default: false)")]
-    pub include_trends: Option<bool>,
+    // No fields currently used
 }
 
 /// Parameters for the mind_intervention_queue tool
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MindInterventionQueueParams {
-    #[schemars(description = "Filter by priority: 'low', 'normal', 'high', 'urgent' (optional)")]
-    pub priority: Option<String>,
-    
-    #[schemars(description = "Maximum number of interventions to return (default: 10)")]
-    pub limit: Option<usize>,
+    // No fields currently used
 }
 
 /// Parameters for the mind_conversation_insights tool
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MindConversationInsightsParams {
-    #[schemars(description = "Session ID to analyze (optional, defaults to current session)")]
-    pub session_id: Option<String>,
-    
-    #[schemars(description = "Include entity analysis (default: true)")]
-    pub include_entities: Option<bool>,
+    // No fields currently used
 }
 
 /// Parameters for the mind_entity_tracking tool  
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct MindEntityTrackingParams {
-    #[schemars(description = "Entity type filter: 'system', 'instance', 'filepath', 'function', 'error', 'configuration', 'command', 'concept', 'tool' (optional)")]
-    pub entity_type: Option<String>,
-    
-    #[schemars(description = "Minimum confidence threshold (0.0-1.0, default: 0.5)")]
-    pub min_confidence: Option<f32>,
-    
-    #[schemars(description = "Include enrichment suggestions (default: false)")]
-    pub include_enrichment: Option<bool>,
+    // No fields currently used
 }
 
 /// Response from ui_debug_env tool

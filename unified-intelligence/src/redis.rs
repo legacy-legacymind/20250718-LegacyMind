@@ -30,29 +30,18 @@ impl RedisManager {
         let redis_host = env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string());
         let redis_port = env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string());
         let redis_password = env::var("REDIS_PASSWORD")
-            .or_else(|_| env::var("REDIS_PASS"))  // Try alternate env var
+            .or_else(|_| env::var("REDIS_PASS"))
             .unwrap_or_else(|_| {
-                // For backward compatibility, check for the legacy hardcoded password
-                // This should only be used temporarily during migration
                 if env::var("ALLOW_DEFAULT_REDIS_PASSWORD").is_ok() {
-                    tracing::warn!("REDIS_PASSWORD not set, using default for local development. This is insecure and should only be used for local testing.");
+                    tracing::warn!("REDIS_PASSWORD not set, using default for local development");
                     "legacymind_redis_pass".to_string()
                 } else {
-                    tracing::error!("REDIS_PASSWORD environment variable is required. Set REDIS_PASSWORD or REDIS_PASS to configure Redis authentication.");
                     panic!("Redis password not configured. Please set REDIS_PASSWORD environment variable.");
                 }
             });
         let redis_db = env::var("REDIS_DB").unwrap_or_else(|_| "0".to_string());
         
-        // Validate Redis password for URL compatibility
-        if !redis_password.is_empty() {
-            // Check for characters that could break the Redis URL format
-            if redis_password.contains('@') || redis_password.contains(':') || redis_password.contains('/') {
-                tracing::error!("Redis password contains invalid characters (@, :, or /). Please use a password without these characters for URL compatibility.");
-                return Err(UnifiedIntelligenceError::Configuration("Invalid Redis password format - contains URL-unsafe characters".to_string()));
-            }
-        }
-        
+        // Build Redis URL - Redis client handles URL encoding automatically
         let redis_url = if redis_password.is_empty() {
             format!("redis://{}:{}/{}", redis_host, redis_port, redis_db)
         } else {
@@ -76,7 +65,7 @@ impl RedisManager {
         });
         
         let pool = cfg.create_pool(Some(Runtime::Tokio1))
-            .map_err(|e| UnifiedIntelligenceError::PoolCreation(e.to_string()))?;
+            .map_err(|e| UnifiedIntelligenceError::Internal(format!("Failed to create Redis pool: {}", e)))?;
         
         // Test the connection
         let mut conn = pool.get().await?;
@@ -110,7 +99,7 @@ impl RedisManager {
         let mut conn = self.get_connection().await?;
         
         // Store with a 7-day expiration
-        conn.set_ex(format!("config:{}", key_name), api_key, DEFAULT_TTL_SECONDS as u64).await?;
+        conn.set_ex::<_, _, ()>(format!("config:{}", key_name), api_key, DEFAULT_TTL_SECONDS as u64).await?;
         
         tracing::debug!("Stored API key '{}' in Redis", key_name);
         Ok(())
@@ -184,10 +173,10 @@ impl RedisManager {
         value: &T,
     ) -> Result<()> {
         let mut conn = self.get_connection().await?;
-        conn.json_set(key, path, value).await?;
+        conn.json_set::<_, _, _, ()>(key, path, value).await?;
         
         // Set TTL for the key (7 days)
-        conn.expire(key, DEFAULT_TTL_SECONDS).await?;
+        conn.expire::<_, ()>(key, DEFAULT_TTL_SECONDS).await?;
         Ok(())
     }
     
@@ -240,7 +229,7 @@ impl RedisManager {
         redis::cmd("JSON.DEL")
             .arg(key)
             .arg(path)
-            .query_async(&mut *conn)
+            .query_async::<()>(&mut *conn)
             .await?;
         
         Ok(())
@@ -255,7 +244,7 @@ impl RedisManager {
     /// Delete a key
     pub async fn del(&self, key: &str) -> Result<()> {
         let mut conn = self.get_connection().await?;
-        conn.del(key).await?;
+        conn.del::<_, ()>(key).await?;
         Ok(())
     }
     
@@ -271,10 +260,10 @@ impl RedisManager {
     /// Increment a value in a sorted set
     pub async fn zadd(&self, key: &str, member: &str, score: f64) -> Result<()> {
         let mut conn = self.get_connection().await?;
-        conn.zadd(key, member, score).await?;
+        conn.zadd::<_, _, _, ()>(key, member, score).await?;
         
         // Set TTL for the key (7 days)
-        conn.expire(key, DEFAULT_TTL_SECONDS).await?;
+        conn.expire::<_, ()>(key, DEFAULT_TTL_SECONDS).await?;
         Ok(())
     }
     
@@ -287,10 +276,10 @@ impl RedisManager {
     /// Add member to a set
     pub async fn sadd(&self, key: &str, member: &str) -> Result<()> {
         let mut conn = self.get_connection().await?;
-        conn.sadd(key, member).await?;
+        conn.sadd::<_, _, ()>(key, member).await?;
         
         // Set TTL for the key (7 days)
-        conn.expire(key, DEFAULT_TTL_SECONDS).await?;
+        conn.expire::<_, ()>(key, DEFAULT_TTL_SECONDS).await?;
         Ok(())
     }
     

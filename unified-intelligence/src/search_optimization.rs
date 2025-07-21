@@ -44,7 +44,7 @@ impl OptimizedSearch {
                 if let Ok(json_array) = serde_json::from_str::<Vec<Value>>(&json_str) {
                     if let Some(thought_value) = json_array.first() {
                         if let Ok(thought) = serde_json::from_value::<ThoughtRecord>(thought_value.clone()) {
-                            thoughts.push((keys[idx].clone(), thought));
+                            thoughts.push((keys[idx].to_string(), thought));
                         }
                     }
                 }
@@ -216,7 +216,6 @@ mod tests {
                 id: "test-1".to_string(),
                 instance: "test".to_string(),
                 thought: "Test thought".to_string(),
-                content: "Test thought".to_string(),
                 thought_number: 1,
                 total_thoughts: 1,
                 timestamp: "2025-01-01T00:00:00Z".to_string(),

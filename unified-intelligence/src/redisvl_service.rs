@@ -142,8 +142,7 @@ impl RedisVLService {
                 let thought = ThoughtRecord {
                     id: thought_id.to_string(),
                     instance: self.instance_id.clone(),
-                    thought: content.clone(),
-                    content,
+                    thought: content,
                     timestamp: chrono::Utc::now().to_rfc3339(),
                     thought_number: 1,
                     total_thoughts: 1,
