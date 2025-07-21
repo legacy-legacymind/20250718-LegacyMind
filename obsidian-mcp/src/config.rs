@@ -19,12 +19,16 @@ pub struct ObsidianMcpConfig {
 pub struct VaultConfig {
     /// Root path of the Obsidian vault
     pub root_path: PathBuf,
+    /// Name of the vault for generating obsidian:// URLs
+    pub vault_name: String,
     /// Allowed file extensions for operations
     pub allowed_extensions: Vec<String>,
     /// Maximum file size in bytes for operations
     pub max_file_size: u64,
     /// Whether to enable file watching for changes
     pub enable_watching: bool,
+    /// Whether to parse and include wikilinks in search results
+    pub enable_wikilinks: bool,
 }
 
 /// Redis configuration for Federation integration
@@ -45,7 +49,9 @@ pub struct ServerConfig {
     pub name: String,
     /// Server version
     pub version: String,
-}impl Default for ObsidianMcpConfig {
+}
+
+impl Default for ObsidianMcpConfig {
     fn default() -> Self {
         Self {
             vault: VaultConfig::default(),
@@ -59,6 +65,7 @@ impl Default for VaultConfig {
     fn default() -> Self {
         Self {
             root_path: PathBuf::from("./vault"),
+            vault_name: "ObsidianVault".to_string(),
             allowed_extensions: vec![
                 "md".to_string(),
                 "txt".to_string(),
@@ -68,6 +75,7 @@ impl Default for VaultConfig {
             ],
             max_file_size: 10 * 1024 * 1024, // 10MB
             enable_watching: false,
+            enable_wikilinks: true,
         }
     }
 }
@@ -96,9 +104,11 @@ impl ObsidianMcpConfig {
         let mut config = Config::builder()
             // Start with defaults
             .set_default("vault.root_path", default_vault_path)?
+            .set_default("vault.vault_name", "LegacyMind_Vault")?
             .set_default("vault.allowed_extensions", vec!["md", "txt", "json", "yaml", "yml"])?
             .set_default("vault.max_file_size", 10 * 1024 * 1024)?
             .set_default("vault.enable_watching", false)?
+            .set_default("vault.enable_wikilinks", true)?
             .set_default("server.name", "ObsidianMCP")?
             .set_default("server.version", env!("CARGO_PKG_VERSION"))?;
 

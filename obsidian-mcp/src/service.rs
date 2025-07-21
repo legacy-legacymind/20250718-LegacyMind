@@ -184,6 +184,8 @@ impl ObsidianMcpService {
         let create_params = CreateFileParams {
             path: params.path.clone(),
             content: content.clone(),
+            frontmatter: params.frontmatter.clone(),
+            tags: params.tags.clone(),
             create_dirs: params.create_dirs,
             overwrite: params.overwrite,
         };
@@ -211,6 +213,8 @@ impl ObsidianMcpService {
         let update_params = UpdateFileParams {
             path: params.path.clone(),
             content: content.clone(),
+            frontmatter: params.frontmatter.clone(),
+            tags: params.tags.clone(),
             create_if_missing: params.create_if_missing,
         };
         
@@ -285,7 +289,7 @@ impl ObsidianMcpService {
         
         SearchHelp {
             tool_name: "search".to_string(),
-            description: "Search for files and content within the Obsidian vault with filtering options".to_string(),
+            description: "Search for files and content within the Obsidian vault with filtering options. Includes wikilink parsing when content is included.".to_string(),
             parameters: vec![
                 ParameterHelp {
                     name: "query".to_string(),
@@ -338,8 +342,10 @@ impl ObsidianMcpService {
             tips: vec![
                 "Use specific keywords for better results".to_string(),
                 "path_prefix helps narrow down search scope".to_string(),
-                "include_content shows file contents in results".to_string(),
+                "include_content shows file contents and parses wikilinks in results".to_string(),
                 "extensions filter limits to specific file types".to_string(),
+                "Wikilinks are automatically parsed when include_content=true".to_string(),
+                "Search also looks inside wikilink targets for matches".to_string(),
             ],
         }
     }
@@ -362,13 +368,13 @@ impl ObsidianMcpService {
                     operation: "create".to_string(),
                     description: "Create a new file".to_string(),
                     required_params: vec!["path".to_string(), "content".to_string()],
-                    optional_params: vec!["create_dirs".to_string(), "overwrite".to_string()],
+                    optional_params: vec!["create_dirs".to_string(), "overwrite".to_string(), "frontmatter".to_string(), "tags".to_string()],
                 },
                 OperationHelp {
                     operation: "update".to_string(),
                     description: "Update an existing file".to_string(),
                     required_params: vec!["path".to_string(), "content".to_string()],
-                    optional_params: vec!["create_if_missing".to_string()],
+                    optional_params: vec!["create_if_missing".to_string(), "frontmatter".to_string(), "tags".to_string()],
                 },
                 OperationHelp {
                     operation: "delete".to_string(),
@@ -400,9 +406,19 @@ impl ObsidianMcpService {
                     params: serde_json::json!({"path": "daily-notes/2024-01-15.md", "content": "# Daily Note\n\nToday's tasks:", "create_dirs": true}),
                 },
                 BrowseExample {
+                    description: "Create a note with frontmatter and tags".to_string(),
+                    operation: "create".to_string(),
+                    params: serde_json::json!({"path": "project-notes.md", "content": "# Project Planning\n\nKey objectives...", "frontmatter": {"type": "planning-doc", "importance": 8}, "tags": ["project", "planning"]}),
+                },
+                BrowseExample {
                     description: "Update existing file".to_string(),
                     operation: "update".to_string(),
                     params: serde_json::json!({"path": "todo.md", "content": "# Updated Todo List\n\n- [x] Task 1\n- [ ] Task 2"}),
+                },
+                BrowseExample {
+                    description: "Update file with new metadata (preserves existing frontmatter if not overridden)".to_string(),
+                    operation: "update".to_string(),
+                    params: serde_json::json!({"path": "notes.md", "content": "Updated content...", "frontmatter": {"status": "completed"}, "tags": ["finished"]}),
                 },
                 BrowseExample {
                     description: "Delete a file".to_string(),
@@ -421,6 +437,9 @@ impl ObsidianMcpService {
                 "Set recursive=true when deleting directories".to_string(),
                 "Move operation can rename files and move between directories".to_string(),
                 "Always specify required parameters for each operation".to_string(),
+                "Frontmatter is optional - files work normally without it".to_string(),
+                "Update operations preserve existing frontmatter unless explicitly overridden".to_string(),
+                "Tags can be specified in frontmatter or as inline #tags in content".to_string(),
             ],
         }
     }

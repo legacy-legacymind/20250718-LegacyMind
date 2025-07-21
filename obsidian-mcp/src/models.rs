@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
+use std::collections::HashMap;
+use crate::wikilink::WikilinkSummary;
 
 /// Represents a file or note in the Obsidian vault
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -13,6 +15,8 @@ pub struct VaultFile {
     pub metadata: FileMetadata,
     /// Whether this is a directory
     pub is_directory: bool,
+    /// Wikilinks found in the file content (if content is included)
+    pub wikilinks: Option<WikilinkSummary>,
 }
 
 /// File metadata information
@@ -56,6 +60,10 @@ pub struct CreateFileParams {
     pub path: String,
     /// File content
     pub content: String,
+    /// YAML frontmatter metadata (key-value pairs)
+    pub frontmatter: Option<HashMap<String, serde_json::Value>>,
+    /// Tags to apply to the file
+    pub tags: Option<Vec<String>>,
     /// Whether to create parent directories if they don't exist
     #[serde(default = "default_true")]
     pub create_dirs: bool,
@@ -71,6 +79,10 @@ pub struct UpdateFileParams {
     pub path: String,
     /// New content for the file
     pub content: String,
+    /// YAML frontmatter metadata (key-value pairs)
+    pub frontmatter: Option<HashMap<String, serde_json::Value>>,
+    /// Tags to apply to the file
+    pub tags: Option<Vec<String>>,
     /// Whether to create the file if it doesn't exist
     #[serde(default)]
     pub create_if_missing: bool,
@@ -107,6 +119,21 @@ pub struct SearchResults {
     pub total_matches: usize,
     /// Search query used
     pub query: String,
+    /// Summary of wikilinks across all search results
+    pub wikilink_summary: Option<WikilinkSearchSummary>,
+}
+
+/// Summary of wikilinks found across search results
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WikilinkSearchSummary {
+    /// Total number of files containing wikilinks
+    pub files_with_wikilinks: usize,
+    /// Total number of wikilinks found across all files
+    pub total_wikilinks: usize,
+    /// Total number of valid wikilinks (target files exist)
+    pub total_valid_wikilinks: usize,
+    /// Total number of broken wikilinks (target files don't exist)
+    pub total_broken_wikilinks: usize,
 }
 
 /// Vault configuration and status
@@ -163,6 +190,10 @@ pub struct BrowseParams {
     pub include_content: bool,
     /// File content for create/update operations
     pub content: Option<String>,
+    /// YAML frontmatter metadata (key-value pairs)
+    pub frontmatter: Option<HashMap<String, serde_json::Value>>,
+    /// Tags to apply to the file
+    pub tags: Option<Vec<String>>,
     /// Destination path for move operations
     pub to_path: Option<String>,
     /// Whether to create parent directories if they don't exist (create mode)

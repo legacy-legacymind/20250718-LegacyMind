@@ -7,6 +7,7 @@ mod error;
 mod config;
 mod vault;
 mod service;
+mod wikilink;
 
 use crate::service::ObsidianMcpService;
 
